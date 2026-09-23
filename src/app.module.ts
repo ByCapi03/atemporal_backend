@@ -13,6 +13,8 @@ import { SalesModule } from './modules/sales/sales.module';
 import { IntelligenceModule } from './modules/intelligence/intelligence.module';
 import { NotificationsModule } from './integrations/notifications/notifications.module';
 import { StoreModule } from './modules/store/store.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
@@ -44,6 +46,8 @@ import { StoreModule } from './modules/store/store.module';
     IntelligenceModule,
     NotificationsModule,
     StoreModule,
+    DashboardModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

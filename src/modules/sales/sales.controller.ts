@@ -1,31 +1,32 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Query, Param, UseGuards, Request } from '@nestjs/common';
 import { SalesService } from './sales.service';
-import { CreateSaleDto, UpdateSaleDto } from './sale.dto';
-import { CreatePaymentDto, UpdatePaymentDto } from './payment.dto';
+import { AuthGuard } from '../../common/guards/auth.guard';
 
-@Controller()
+@Controller('sales')
 export class SalesController {
   constructor(private readonly salesService: SalesService) {}
 
-  @Post('sales')
-  createSale(@Body() createSaleDto: CreateSaleDto) { return this.salesService.createSale(createSaleDto); }
-  @Get('sales')
-  findAllSales() { return this.salesService.findAllSales(); }
-  @Get('sales/:id')
-  findOneSale(@Param('id') id: string) { return this.salesService.findOneSale(+id); }
-  @Patch('sales/:id')
-  updateSale(@Param('id') id: string, @Body() updateSaleDto: UpdateSaleDto) { return this.salesService.updateSale(+id, updateSaleDto); }
-  @Delete('sales/:id')
-  removeSale(@Param('id') id: string) { return this.salesService.removeSale(+id); }
+  @Get('my')
+  @UseGuards(AuthGuard)
+  findMySales(@Request() req: any) {
+    return this.salesService.findMySales(req.user);
+  }
 
-  @Post('payments')
-  createPayment(@Body() createPaymentDto: CreatePaymentDto) { return this.salesService.createPayment(createPaymentDto); }
-  @Get('payments')
-  findAllPayments() { return this.salesService.findAllPayments(); }
-  @Get('payments/:id')
-  findOnePayment(@Param('id') id: string) { return this.salesService.findOnePayment(+id); }
-  @Patch('payments/:id')
-  updatePayment(@Param('id') id: string, @Body() updatePaymentDto: UpdatePaymentDto) { return this.salesService.updatePayment(+id, updatePaymentDto); }
-  @Delete('payments/:id')
-  removePayment(@Param('id') id: string) { return this.salesService.removePayment(+id); }
+  @Get('my/:id')
+  @UseGuards(AuthGuard)
+  findOneMySale(@Param('id') id: string, @Request() req: any) {
+    return this.salesService.findOneMySale(+id, req.user);
+  }
+
+  @Get()
+  @UseGuards(AuthGuard)
+  findAllSales(@Query() query: any, @Request() req: any) {
+    return this.salesService.findAllSales(query, req.user);
+  }
+
+  @Get(':id')
+  @UseGuards(AuthGuard)
+  findOneSale(@Param('id') id: string, @Request() req: any) {
+    return this.salesService.findOneSale(+id, req.user);
+  }
 }

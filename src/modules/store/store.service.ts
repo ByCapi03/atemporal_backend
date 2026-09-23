@@ -93,6 +93,7 @@ export class StoreService {
           branchName: inv.branch.name,
           cityId: inv.branch.city.id,
           cityName: inv.branch.city.name,
+          available,
           status: available <= 5 ? 'LOW_STOCK' : 'AVAILABLE'
         });
       }
