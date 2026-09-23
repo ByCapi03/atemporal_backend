@@ -11,12 +11,13 @@ import { AccessService } from './access.service';
 import { User } from './user.entity';
 import { Role } from './role.entity';
 import { UserRole } from './user-role.entity';
+import { Client } from '../clients/client.entity';
 import { MailService } from '../../common/mail.service';
 import { AuthGuard } from '../../common/guards/auth.guard';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Role, UserRole]),
+    TypeOrmModule.forFeature([User, Role, UserRole, Client]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

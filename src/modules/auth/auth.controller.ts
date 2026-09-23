@@ -1,6 +1,6 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Request, Get } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { LoginDto, SetupAdminDto, ChangePasswordDto } from './auth.dto';
+import { LoginDto, SetupAdminDto, ChangePasswordDto, RegisterClientDto, RequestActivationDto, ActivateAccountDto } from './auth.dto';
 import { AuthGuard } from '../../common/guards/auth.guard';
 
 @Controller('auth')
@@ -24,8 +24,20 @@ export class AuthController {
   }
 
   @Post('register')
-  register(@Body() registerDto: any) {
+  register(@Body() registerDto: RegisterClientDto) {
     return this.authService.registerClient(registerDto);
+  }
+
+  @Post('request-account-activation')
+  @HttpCode(HttpStatus.OK)
+  requestAccountActivation(@Body() dto: RequestActivationDto) {
+    return this.authService.requestAccountActivation(dto.email);
+  }
+
+  @Post('activate-account')
+  @HttpCode(HttpStatus.OK)
+  activateAccount(@Body() dto: ActivateAccountDto) {
+    return this.authService.activateAccount(dto.email, dto.code, dto.password);
   }
 
   @UseGuards(AuthGuard)

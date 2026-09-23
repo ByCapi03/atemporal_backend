@@ -124,6 +124,10 @@ export class CatalogService {
 
   // --- PRODUCTS ---
   async createProduct(createProductDto: CreateProductDto) {
+    if (createProductDto.arEnabled && !createProductDto.arType) {
+      throw new BadRequestException('El tipo de prenda AR (arType) es obligatorio si AR está habilitado');
+    }
+
     const category = await this.categoryRepository.findOneBy({ id: createProductDto.categoryId });
     if (!category) throw new NotFoundException(`Categora #${createProductDto.categoryId} no encontrada`);
 
@@ -146,6 +150,13 @@ export class CatalogService {
   }
   async updateProduct(id: number, updateProductDto: UpdateProductDto) {
     const product = await this.findOneProduct(id);
+
+    const isArEnabled = updateProductDto.arEnabled !== undefined ? updateProductDto.arEnabled : product.arEnabled;
+    const currentArType = updateProductDto.arType !== undefined ? updateProductDto.arType : product.arType;
+    if (isArEnabled && !currentArType) {
+      throw new BadRequestException('El tipo de prenda AR (arType) es obligatorio si AR está habilitado');
+    }
+
     if (updateProductDto.categoryId) {
       const category = await this.categoryRepository.findOneBy({ id: updateProductDto.categoryId });
       if (!category) throw new NotFoundException(`Categora #${updateProductDto.categoryId} no encontrada`);

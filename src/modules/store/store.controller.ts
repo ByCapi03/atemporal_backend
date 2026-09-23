@@ -19,4 +19,9 @@ export class StoreController {
   getAvailability(@Param('variantId') variantId: string) {
     return this.storeService.getAvailability(+variantId);
   }
+
+  @Get('try-on/:variantId')
+  getTryOnData(@Param('variantId') variantId: string) {
+    return this.storeService.getTryOnData(+variantId);
+  }
 }

@@ -33,7 +33,7 @@ export class StoreService {
       categoryName: p.category.name,
       imageUrl: p.imageUrl,
       arEnabled: p.arEnabled,
-      arImageUrl: p.arImageUrl,
+      arImageUrl: p.arImageUrl ?? p.imageUrl,
       arType: p.arType
     }));
   }
@@ -60,7 +60,7 @@ export class StoreService {
       categoryName: product.category.name,
       imageUrl: product.imageUrl,
       arEnabled: product.arEnabled,
-      arImageUrl: product.arImageUrl,
+      arImageUrl: product.arImageUrl ?? product.imageUrl,
       arType: product.arType,
       variants: activeVariants.map(v => ({
         id: v.id,
@@ -99,5 +99,33 @@ export class StoreService {
     }
 
     return result;
+  }
+
+  async getTryOnData(variantId: number) {
+    const variant = await this.variantRepository.findOne({
+      where: { id: variantId, active: true },
+      relations: { product: true, size: true, color: true }
+    });
+
+    if (!variant || !variant.product.active) {
+      throw new NotFoundException('Variante o producto no disponible para prueba virtual');
+    }
+
+    const product = variant.product;
+
+    return {
+      variantId: variant.id,
+      sku: variant.sku,
+      size: variant.size.name,
+      color: variant.color.name,
+      product: {
+        id: product.id,
+        name: product.name,
+        imageUrl: product.imageUrl,
+        arEnabled: product.arEnabled,
+        arImageUrl: product.arImageUrl ?? product.imageUrl,
+        arType: product.arType
+      }
+    };
   }
 }

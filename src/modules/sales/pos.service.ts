@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, ILike, Or } from 'typeorm';
 
 import { User } from '../auth/user.entity';
 import { Branch } from '../branches/branch.entity';
@@ -12,8 +12,8 @@ import { SaleItem } from './sale-item.entity';
 import { Payment } from './payment.entity';
 import { InventoryMovement } from '../inventory/inventory-movement.entity';
 
-import { CreatePosSaleDto } from './sales.dto';
-import { SaleChannel, SaleStatus, PaymentStatus, CashSessionStatus } from '../../common/enums/sales.enums';
+import { CreatePosSaleDto, CreatePosClientDto } from './sales.dto';
+import { SaleChannel, SaleStatus, PaymentStatus, CashSessionStatus, PaymentMethod } from '../../common/enums/sales.enums';
 import { MovementType } from '../../common/enums/inventory.enums';
 
 @Injectable()
@@ -22,6 +22,7 @@ export class PosService {
     @InjectRepository(User) private userRepository: Repository<User>,
     @InjectRepository(Branch) private branchRepository: Repository<Branch>,
     @InjectRepository(Inventory) private inventoryRepository: Repository<Inventory>,
+    @InjectRepository(Client) private clientRepository: Repository<Client>,
     private dataSource: DataSource
   ) {}
 
@@ -144,13 +145,21 @@ export class PosService {
       const inventoryMovementsToSave = [];
       const inventoriesToUpdate = [];
 
-      // 3. Pessimistic read and logic per item
+      // 3. Pessimistic lock per item using QueryBuilder with INNER JOINs
+      // FIX: findOne with relations uses LEFT JOINs, which PostgreSQL rejects with FOR UPDATE (SQLSTATE 0A000).
+      // Solution: use QueryBuilder with innerJoinAndSelect so all joins are INNER, compatible with FOR UPDATE.
       for (const item of consolidatedItems) {
-        const inventory = await queryRunner.manager.findOne(Inventory, {
-          where: { branchId, variantId: item.variantId },
-          relations: { variant: { product: true } },
-          lock: { mode: 'pessimistic_write' }
-        });
+        const inventory = await queryRunner.manager
+          .getRepository(Inventory)
+          .createQueryBuilder('inv')
+          .innerJoinAndSelect('inv.variant', 'variant')
+          .innerJoinAndSelect('variant.product', 'product')
+          .where('inv.branchId = :branchId AND inv.variantId = :variantId', {
+            branchId,
+            variantId: item.variantId,
+          })
+          .setLock('pessimistic_write')
+          .getOne();
 
         if (!inventory) {
           throw new NotFoundException(`Inventario no encontrado para variante ${item.variantId} en esta sucursal`);
@@ -182,7 +191,7 @@ export class PosService {
         });
         saleItemsToSave.push(saleItem);
 
-        // Update inventory logic
+        // Update inventory
         inventory.stock -= item.quantity;
         inventoriesToUpdate.push(inventory);
 
@@ -204,10 +213,10 @@ export class PosService {
         branchId,
         userId,
         cashSessionId: openSession.id,
-        clientId: dto.clientId || undefined,
+        clientId: dto.clientId ?? undefined,
         subtotal: total,
         total: total
-      });
+      } as any);
       const savedSale = await queryRunner.manager.save(Sale, sale);
 
       // Save related entities
@@ -219,7 +228,7 @@ export class PosService {
       const payment = queryRunner.manager.create(Payment, {
         saleId: savedSale.id,
         amount: total,
-        method: dto.paymentMethod as any,
+        method: dto.paymentMethod,
         status: PaymentStatus.APROBADO
       });
       await queryRunner.manager.save(Payment, payment);
@@ -234,7 +243,18 @@ export class PosService {
       }
 
       await queryRunner.commitTransaction();
-      return savedSale;
+      return {
+        id: savedSale.id,
+        total: savedSale.total,
+        subtotal: savedSale.subtotal,
+        channel: savedSale.channel,
+        status: savedSale.status,
+        branchId: savedSale.branchId,
+        clientId: savedSale.clientId,
+        cashSessionId: savedSale.cashSessionId,
+        paymentMethod: dto.paymentMethod,
+        date: savedSale.date,
+      };
 
     } catch (error) {
       await queryRunner.rollbackTransaction();
@@ -242,5 +262,88 @@ export class PosService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  async searchClients(userId: number, search: string) {
+    await this.getValidCashierBranch(userId);
+
+    const q = (search || '').trim();
+    if (!q) {
+      // Return recent clients if no search query
+      const clients = await this.clientRepository.find({
+        where: { active: true },
+        order: { registrationDate: 'DESC' },
+        take: 20,
+      });
+      return clients.map(c => ({
+        id: c.id,
+        name: c.name,
+        lastName: c.lastName,
+        email: c.email,
+        phone: c.phone,
+        hasDigitalAccount: c.userId != null,
+      }));
+    }
+
+    const clients = await this.clientRepository.find({
+      where: [
+        { name: ILike(`%${q}%`), active: true },
+        { lastName: ILike(`%${q}%`), active: true },
+        { email: ILike(`%${q}%`), active: true },
+        { phone: ILike(`%${q}%`), active: true },
+      ],
+      take: 20,
+    });
+
+    return clients.map(c => ({
+      id: c.id,
+      name: c.name,
+      lastName: c.lastName,
+      email: c.email,
+      phone: c.phone,
+      hasDigitalAccount: c.userId != null,
+    }));
+  }
+
+  async createPosClient(userId: number, dto: CreatePosClientDto) {
+    await this.getValidCashierBranch(userId);
+
+    const normalizedEmail = dto.email.trim().toLowerCase();
+
+    // Check for existing client with same email
+    const existingClient = await this.clientRepository.findOne({
+      where: { email: normalizedEmail }
+    });
+    if (existingClient) {
+      throw new ConflictException('Ya existe un cliente registrado con este correo.');
+    }
+
+    // Check for existing user with same email
+    const existingUser = await this.userRepository.findOne({
+      where: { email: normalizedEmail }
+    });
+    if (existingUser) {
+      throw new ConflictException('Este correo ya pertenece a un usuario digital. Por favor, asocie la cuenta o use otro correo.');
+    }
+
+    const client = this.clientRepository.create({
+      name: dto.name.trim(),
+      lastName: dto.lastName.trim(),
+      email: normalizedEmail,
+      phone: dto.phone?.trim() || null,
+      active: true,
+      userId: null,
+    } as any);
+
+    const saved = await this.clientRepository.save(client) as unknown as Client;
+
+    return {
+      id: saved.id,
+      name: saved.name,
+      lastName: saved.lastName,
+      email: saved.email,
+      phone: saved.phone,
+      hasDigitalAccount: false,
+    };
   }
 }

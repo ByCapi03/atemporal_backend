@@ -33,6 +33,14 @@ export class Client {
   @Column({ nullable: true, unique: true })
   userId: number;
 
+  // Para activación de cuenta digital (cliente POS que activa cuenta web)
+  // NOTA: En producción usar migraciones en lugar de synchronize:true
+  @Column({ type: 'varchar', nullable: true })
+  activationCodeHash: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  activationCodeExpiresAt: Date | null;
+
   @OneToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'userId' })
   user: User;
