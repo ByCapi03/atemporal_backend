@@ -13,6 +13,16 @@ export class ReservationsController {
     return this.reservationsService.create(createReservationDto, req.user);
   }
 
+  @Get('my')
+  findMyReservations(@Request() req: any) {
+    return this.reservationsService.findMyReservations(req.user);
+  }
+
+  @Get('my/:id')
+  findOneMyReservation(@Param('id') id: string, @Request() req: any) {
+    return this.reservationsService.findOneMyReservation(+id, req.user);
+  }
+
   @Get()
   findAll(@Request() req: any) {
     return this.reservationsService.findAll(req.user);

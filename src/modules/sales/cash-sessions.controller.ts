@@ -19,4 +19,10 @@ export class CashSessionsController {
     const userId = req.user.sub;
     return this.cashSessionsService.getCurrentSession(userId);
   }
+
+  @Post('close')
+  closeSession(@Req() req: any, @Body() closeCashSessionDto: import('./sales.dto').CloseCashSessionDto) {
+    const userId = req.user.sub;
+    return this.cashSessionsService.closeSession(userId, closeCashSessionDto);
+  }
 }

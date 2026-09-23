@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 
@@ -10,6 +10,7 @@ import { Inventory } from '../inventory/inventory.entity';
 import { InventoryMovement } from '../inventory/inventory-movement.entity';
 import { Branch } from '../branches/branch.entity';
 import { Variant } from '../catalog/variant.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 
 import { ReservationStatus } from '../../common/enums/reservation.enums';
 import { MovementType } from '../../common/enums/inventory.enums';
@@ -22,6 +23,7 @@ export class ReservationsService {
     @InjectRepository(Client) private clientRepository: Repository<Client>,
     @InjectRepository(Inventory) private inventoryRepository: Repository<Inventory>,
     private dataSource: DataSource,
+    private notificationsService: NotificationsService,
   ) {}
 
   private async getClientByUser(user: any): Promise<Client> {
@@ -98,6 +100,15 @@ export class ReservationsService {
       }
 
       await queryRunner.commitTransaction();
+
+      // Disparar notificaciones despues del commit de forma asincrona y segura
+      const clientName = `${client.name} ${client.lastName}`;
+      this.notificationsService.notifyNewReservation(
+        createReservationDto.branchId,
+        savedReservation,
+        clientName
+      ).catch(e => console.error('Failed to notify reservation', e));
+
       return savedReservation;
     } catch (err) {
       await queryRunner.rollbackTransaction();
@@ -107,20 +118,67 @@ export class ReservationsService {
     }
   }
 
+  async findMyReservations(user: any) {
+    if (!user.roles?.includes('CLIENT')) {
+      throw new ForbiddenException('Endpoint exclusivo para clientes');
+    }
+    const client = await this.getClientByUser(user);
+
+    return this.reservationRepository.find({
+      where: { clientId: client.id },
+      relations: {
+        branch: true,
+        client: true,
+        items: {
+          variant: {
+            product: true,
+            size: true,
+            color: true
+          }
+        }
+      },
+      order: { id: 'DESC' }
+    });
+  }
+
+  async findOneMyReservation(id: number, user: any) {
+    if (!user.roles?.includes('CLIENT')) {
+      throw new ForbiddenException('Endpoint exclusivo para clientes');
+    }
+    const client = await this.getClientByUser(user);
+
+    const reservation = await this.reservationRepository.findOne({
+      where: { id, clientId: client.id },
+      relations: {
+        branch: true,
+        client: true,
+        items: {
+          variant: {
+            product: true,
+            size: true,
+            color: true
+          }
+        }
+      }
+    });
+
+    if (!reservation) throw new NotFoundException('Reserva no encontrada');
+    return reservation;
+  }
+
   async findAll(user: any) {
     const isAdmin = user.roles?.includes('ADMIN');
     const isEncargado = user.roles?.includes('ENCARGADO');
+    const isCajero = user.roles?.includes('CAJERO');
     
+    if (!isAdmin && !isEncargado && !isCajero) {
+      throw new ForbiddenException('No tiene permisos internos para listar reservas');
+    }
+
     let whereClause: any = {};
 
-    if (isAdmin) {
-      // Todo
-    } else if (isEncargado) {
+    if (isEncargado || isCajero) {
       whereClause.branchId = user.branchId;
-    } else {
-      // Cliente
-      const client = await this.getClientByUser(user);
-      whereClause.clientId = client.id;
     }
 
     return this.reservationRepository.find({
@@ -143,7 +201,12 @@ export class ReservationsService {
   async findOne(id: number, user: any) {
     const isAdmin = user.roles?.includes('ADMIN');
     const isEncargado = user.roles?.includes('ENCARGADO');
+    const isCajero = user.roles?.includes('CAJERO');
     
+    if (!isAdmin && !isEncargado && !isCajero) {
+      throw new ForbiddenException('No tiene permisos internos para ver esta reserva');
+    }
+
     const reservation = await this.reservationRepository.findOne({
       where: { id },
       relations: {
@@ -161,15 +224,8 @@ export class ReservationsService {
 
     if (!reservation) throw new NotFoundException('Reserva no encontrada');
 
-    if (!isAdmin) {
-      if (isEncargado && reservation.branchId !== user.branchId) {
-        throw new UnauthorizedException('No tiene permisos para ver reservas de otras sucursales');
-      } else if (!isEncargado) {
-        const client = await this.getClientByUser(user);
-        if (reservation.clientId !== client.id) {
-          throw new UnauthorizedException('Solo puedes ver tus propias reservas');
-        }
-      }
+    if (!isAdmin && (isEncargado || isCajero) && reservation.branchId !== user.branchId) {
+      throw new UnauthorizedException('No tiene permisos para ver reservas de otras sucursales');
     }
 
     return reservation;
@@ -180,7 +236,13 @@ export class ReservationsService {
 
     const isAdmin = user.roles?.includes('ADMIN');
     const isEncargado = user.roles?.includes('ENCARGADO');
-    const isClient = !isAdmin && !isEncargado;
+    const isCajero = user.roles?.includes('CAJERO');
+    
+    if (isCajero) {
+      throw new UnauthorizedException('Cajeros no pueden modificar estados de reservas');
+    }
+
+    const isClient = !isAdmin && !isEncargado && !isCajero;
 
     // Solo un cliente o administrador/encargado puede cancelar
     if (updateReservationDto.status === ReservationStatus.CANCELADA) {

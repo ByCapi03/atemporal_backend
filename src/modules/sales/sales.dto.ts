@@ -8,6 +8,12 @@ export class OpenCashSessionDto {
   openingAmount: number;
 }
 
+export class CloseCashSessionDto {
+  @IsNumber()
+  @Min(0, { message: 'El monto de cierre no puede ser negativo' })
+  closingAmount: number;
+}
+
 export class PosSaleItemDto {
   @IsInt()
   @IsPositive()

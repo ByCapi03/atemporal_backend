@@ -22,6 +22,9 @@ export class SalesService {
   }
 
   async findMySales(user: any) {
+    if (!user.roles?.includes('CLIENT')) {
+      throw new ForbiddenException('Endpoint exclusivo para clientes');
+    }
     const client = await this.getClientByUser(user);
 
     const sales = await this.saleRepository.find({
@@ -45,6 +48,9 @@ export class SalesService {
   }
 
   async findOneMySale(id: number, user: any) {
+    if (!user.roles?.includes('CLIENT')) {
+      throw new ForbiddenException('Endpoint exclusivo para clientes');
+    }
     const client = await this.getClientByUser(user);
 
     const sale = await this.saleRepository.findOne({

@@ -11,6 +11,7 @@ import { InventoryMovement } from '../inventory/inventory-movement.entity';
 import { Branch } from '../branches/branch.entity';
 import { Variant } from '../catalog/variant.entity';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -23,7 +24,8 @@ import { AuthModule } from '../auth/auth.module';
       Branch,
       Variant
     ]),
-    AuthModule
+    AuthModule,
+    NotificationsModule
   ],
   controllers: [ReservationsController],
   providers: [ReservationsService],
