@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { BranchesModule } from './modules/branches/branches.module';
+import { ClientsModule } from './modules/clients/clients.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { ReservationsModule } from './modules/reservations/reservations.module';
 import { SalesModule } from './modules/sales/sales.module';
@@ -35,6 +36,7 @@ import { NotificationsModule } from './integrations/notifications/notifications.
     AuthModule,
     CatalogModule,
     BranchesModule,
+    ClientsModule,
     InventoryModule,
     ReservationsModule,
     SalesModule,

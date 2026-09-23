@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { BranchesController } from './controllers/branches.controller';
-import { CitiesController } from './controllers/cities.controller';
-import { BranchesService } from './services/branches.service';
-import { CitiesService } from './services/cities.service';
+import { BranchesController } from './branches.controller';
+import { CitiesController } from './cities.controller';
+import { BranchesService } from './branches.service';
+import { CitiesService } from './cities.service';
 
-import { Branch } from './entities/branches/branch.entity';
-import { City } from './entities/cities/city.entity';
+import { Branch } from './branch.entity';
+import { City } from './city.entity';
 
 @Module({
   imports: [

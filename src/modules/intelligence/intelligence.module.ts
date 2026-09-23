@@ -1,11 +1,9 @@
 import { Module } from '@nestjs/common';
-import { AiController } from './controllers/ai.controller';
-import { ReportsController } from './controllers/reports.controller';
-import { AiService } from './services/ai.service';
-import { ReportsService } from './services/reports.service';
+import { IntelligenceController } from './intelligence.controller';
+import { IntelligenceService } from './intelligence.service';
 
 @Module({
-  controllers: [AiController, ReportsController],
-  providers: [AiService, ReportsService],
+  controllers: [IntelligenceController],
+  providers: [IntelligenceService],
 })
 export class IntelligenceModule {}
