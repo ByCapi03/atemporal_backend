@@ -11,6 +11,8 @@ import { AccessService } from './access.service';
 import { User } from './user.entity';
 import { Role } from './role.entity';
 import { UserRole } from './user-role.entity';
+import { MailService } from '../../common/mail.service';
+import { AuthGuard } from '../../common/guards/auth.guard';
 
 @Module({
   imports: [
@@ -27,7 +29,7 @@ import { UserRole } from './user-role.entity';
     }),
   ],
   controllers: [AuthController, AccessController],
-  providers: [AuthService, AccessService],
-  exports: [AuthService, AccessService],
+  providers: [AuthService, AccessService, MailService, AuthGuard],
+  exports: [AuthService, AccessService, MailService, JwtModule, AuthGuard],
 })
 export class AuthModule {}

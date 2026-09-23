@@ -19,6 +19,15 @@ export class User {
   @Column({ default: true })
   active: boolean;
 
+  @Column({ default: false })
+  mustChangePassword: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  temporaryPasswordExpiresAt: Date | null;
+
+  @Column({ default: false })
+  emailVerified: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 

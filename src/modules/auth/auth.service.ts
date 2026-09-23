@@ -63,6 +63,9 @@ export class AuthService {
         email: dto.email,
         passwordHash,
         active: true,
+        mustChangePassword: false,
+        temporaryPasswordExpiresAt: null,
+        emailVerified: true,
       });
 
       const savedUser = await queryRunner.manager.save(user);
@@ -100,7 +103,19 @@ export class AuthService {
 
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Correo o contraseña incorrectos');
+      throw new UnauthorizedException('Correo o contrasea incorrectos');
+    }
+
+    if (user.mustChangePassword && user.temporaryPasswordExpiresAt) {
+      if (new Date() > user.temporaryPasswordExpiresAt) {
+        throw new UnauthorizedException('La contrasea temporal ha expirado. Solicita una nueva.');
+      }
+      
+      // If it's valid temporary login, mark email as verified since they got the code
+      if (!user.emailVerified) {
+        user.emailVerified = true;
+        await this.userRepository.save(user);
+      }
     }
 
     const activeRoles = user.userRoles
@@ -124,7 +139,52 @@ export class AuthService {
         email: user.email,
         roles: activeRoles,
         branchId: user.branchId,
+        mustChangePassword: user.mustChangePassword,
       },
+    };
+  }
+
+  async changePassword(userId: number, newPassword: string) {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: { userRoles: { role: true } },
+    });
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    const saltRounds = 10;
+    user.passwordHash = await bcrypt.hash(newPassword, saltRounds);
+    user.mustChangePassword = false;
+    user.temporaryPasswordExpiresAt = null;
+    user.emailVerified = true;
+
+    await this.userRepository.save(user);
+
+    const activeRoles = user.userRoles
+      .filter((ur) => ur.active && ur.role && ur.role.active)
+      .map((ur) => ur.role.name);
+
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      roles: activeRoles,
+      branchId: user.branchId,
+    };
+
+    const accessToken = this.jwtService.sign(payload);
+
+    return { 
+      message: 'Contrasea actualizada correctamente',
+      accessToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        roles: activeRoles,
+        branchId: user.branchId,
+        mustChangePassword: user.mustChangePassword,
+      }
     };
   }
 }

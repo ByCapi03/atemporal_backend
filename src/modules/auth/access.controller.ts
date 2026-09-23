@@ -28,6 +28,11 @@ export class AccessController {
     return this.accessService.updateUser(+id, updateUserDto);
   }
 
+  @Post(':id/resend-temporary-password')
+  resendTemporaryPassword(@Param('id') id: string, @Request() req: any) {
+    return this.accessService.resendTemporaryPassword(+id, req.user);
+  }
+
   @Delete(':id')
   removeUser(@Param('id') id: string) {
     return this.accessService.removeUser(+id);

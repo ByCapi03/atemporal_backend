@@ -3,7 +3,6 @@ import {
   ManyToOne, JoinColumn, OneToMany,
 } from 'typeorm';
 import { Category } from './category.entity';
-import { Supplier } from '../inventory/supplier.entity';
 import { Variant } from './variant.entity';
 
 @Entity('products')
@@ -23,16 +22,15 @@ export class Product {
   @Column()
   categoryId: number;
 
-  @Column()
-  supplierId: number;
+  @Column({ nullable: true })
+  imageUrl: string;
+
+  @Column({ nullable: true })
+  imagePublicId: string;
 
   @ManyToOne(() => Category, (category) => category.products)
   @JoinColumn({ name: 'categoryId' })
   category: Category;
-
-  @ManyToOne(() => Supplier, (supplier) => supplier.products)
-  @JoinColumn({ name: 'supplierId' })
-  supplier: Supplier;
 
   @OneToMany(() => Variant, (variant) => variant.product)
   variants: Variant[];

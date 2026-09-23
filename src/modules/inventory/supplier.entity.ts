@@ -23,7 +23,4 @@ export class Supplier {
 
   @Column({ default: true })
   active: boolean;
-
-  @OneToMany(() => Product, (product) => product.supplier)
-  products: Product[];
 }

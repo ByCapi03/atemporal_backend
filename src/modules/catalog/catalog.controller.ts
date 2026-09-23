@@ -7,8 +7,12 @@ import {
   CreateSizeDto, UpdateSizeDto,
   CreateColorDto, UpdateColorDto
 } from './catalog.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { AuthGuard } from '../../common/guards/auth.guard';
+import { UploadedFile, UseInterceptors, UseGuards } from '@nestjs/common';
 
 @Controller()
+@UseGuards(AuthGuard)
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
 
@@ -22,6 +26,15 @@ export class CatalogController {
   updateProduct(@Param('id') id: string, @Body() updateProductDto: UpdateProductDto) { return this.catalogService.updateProduct(+id, updateProductDto); }
   @Delete('products/:id')
   removeProduct(@Param('id') id: string) { return this.catalogService.removeProduct(+id); }
+
+  @Post('products/:id/image')
+  @UseInterceptors(FileInterceptor('image'))
+  uploadProductImage(
+    @Param('id') id: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.catalogService.uploadProductImage(+id, file);
+  }
 
   @Post('variants')
   createVariant(@Body() createVariantDto: CreateVariantDto) { return this.catalogService.createVariant(createVariantDto); }

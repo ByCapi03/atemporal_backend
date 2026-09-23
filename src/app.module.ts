@@ -12,6 +12,7 @@ import { ReservationsModule } from './modules/reservations/reservations.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { IntelligenceModule } from './modules/intelligence/intelligence.module';
 import { NotificationsModule } from './integrations/notifications/notifications.module';
+import { StoreModule } from './modules/store/store.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { NotificationsModule } from './integrations/notifications/notifications.
     SalesModule,
     IntelligenceModule,
     NotificationsModule,
+    StoreModule,
   ],
   controllers: [AppController],
   providers: [AppService],
