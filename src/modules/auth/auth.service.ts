@@ -144,6 +144,62 @@ export class AuthService {
     };
   }
 
+  async registerClient(registerDto: any) {
+    const { name, lastName, email, password, phone } = registerDto;
+    const existingUser = await this.userRepository.findOne({ where: { email } });
+    if (existingUser) {
+      throw new ConflictException('El correo electrónico ya está en uso');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const role = await queryRunner.manager.findOne(Role, { where: { name: 'CLIENTE' } });
+      if (!role) throw new InternalServerErrorException('Rol CLIENTE no encontrado');
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      const user = queryRunner.manager.create(User, {
+        name,
+        email,
+        passwordHash,
+        active: true,
+        mustChangePassword: false,
+        emailVerified: false,
+      });
+      const savedUser = await queryRunner.manager.save(user);
+
+      const userRole = queryRunner.manager.create(UserRole, {
+        userId: savedUser.id,
+        roleId: role.id,
+        active: true,
+      });
+      await queryRunner.manager.save(userRole);
+
+      // Create Client entity linked to User
+      const client = queryRunner.manager.create('Client', { // using string target to avoid importing Client if not injected, or let's use standard. Wait, Client is not imported here.
+        name,
+        lastName,
+        email,
+        phone,
+        userId: savedUser.id,
+        active: true
+      });
+      await queryRunner.manager.save('Client', client);
+
+      await queryRunner.commitTransaction();
+
+      // Return tokens
+      return this.login({ email, password });
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async changePassword(userId: number, newPassword: string) {
     const user = await this.userRepository.findOne({
       where: { id: userId },

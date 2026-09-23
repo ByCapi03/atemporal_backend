@@ -23,6 +23,11 @@ export class AuthController {
     return this.authService.login(loginDto);
   }
 
+  @Post('register')
+  register(@Body() registerDto: any) {
+    return this.authService.registerClient(registerDto);
+  }
+
   @UseGuards(AuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('change-password')
