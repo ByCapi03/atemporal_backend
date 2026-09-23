@@ -36,6 +36,15 @@ export class CatalogController {
     return this.catalogService.uploadProductImage(+id, file);
   }
 
+  @Post('products/:id/ar-image')
+  @UseInterceptors(FileInterceptor('image'))
+  uploadProductArImage(
+    @Param('id') id: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.catalogService.uploadProductArImage(+id, file);
+  }
+
   @Post('variants')
   createVariant(@Body() createVariantDto: CreateVariantDto) { return this.catalogService.createVariant(createVariantDto); }
   @Get('variants')

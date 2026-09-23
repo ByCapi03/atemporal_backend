@@ -5,6 +5,12 @@ import {
 import { Category } from './category.entity';
 import { Variant } from './variant.entity';
 
+export enum ArGarmentType {
+  TOP = 'TOP',
+  BOTTOM = 'BOTTOM',
+  DRESS = 'DRESS',
+}
+
 @Entity('products')
 export class Product {
   @PrimaryGeneratedColumn()
@@ -27,6 +33,18 @@ export class Product {
 
   @Column({ nullable: true })
   imagePublicId: string;
+
+  @Column({ default: false })
+  arEnabled: boolean;
+
+  @Column({ nullable: true })
+  arImageUrl: string;
+
+  @Column({ nullable: true })
+  arImagePublicId: string;
+
+  @Column({ type: 'enum', enum: ArGarmentType, nullable: true })
+  arType: ArGarmentType;
 
   @ManyToOne(() => Category, (category) => category.products)
   @JoinColumn({ name: 'categoryId' })

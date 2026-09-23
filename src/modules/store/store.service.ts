@@ -30,7 +30,11 @@ export class StoreService {
       name: p.name,
       price: p.price,
       categoryId: p.categoryId,
-      categoryName: p.category.name
+      categoryName: p.category.name,
+      imageUrl: p.imageUrl,
+      arEnabled: p.arEnabled,
+      arImageUrl: p.arImageUrl,
+      arType: p.arType
     }));
   }
 
@@ -54,6 +58,10 @@ export class StoreService {
       name: product.name,
       price: product.price,
       categoryName: product.category.name,
+      imageUrl: product.imageUrl,
+      arEnabled: product.arEnabled,
+      arImageUrl: product.arImageUrl,
+      arType: product.arType,
       variants: activeVariants.map(v => ({
         id: v.id,
         sku: v.sku,

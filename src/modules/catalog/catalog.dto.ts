@@ -1,5 +1,6 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { IsString, IsNotEmpty, IsBoolean, IsOptional, IsNumber, IsDecimal, IsPositive } from 'class-validator';
+import { IsString, IsNotEmpty, IsBoolean, IsOptional, IsNumber, IsDecimal, IsPositive, IsEnum } from 'class-validator';
+import { ArGarmentType } from './product.entity';
 
 export class CreateCategoryDto {
   @IsString()
@@ -50,6 +51,14 @@ export class CreateProductDto {
   @IsBoolean()
   @IsOptional()
   active?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  arEnabled?: boolean;
+
+  @IsEnum(ArGarmentType)
+  @IsOptional()
+  arType?: ArGarmentType;
 }
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
 

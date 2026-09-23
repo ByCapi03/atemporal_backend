@@ -166,7 +166,8 @@ export class AuthService {
         passwordHash,
         active: true,
         mustChangePassword: false,
-        emailVerified: false,
+        temporaryPasswordExpiresAt: null,
+        emailVerified: true,
       });
       const savedUser = await queryRunner.manager.save(user);
 

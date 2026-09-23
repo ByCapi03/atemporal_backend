@@ -24,24 +24,16 @@ export class ReservationsService {
     private dataSource: DataSource,
   ) {}
 
-  private async getOrCreateClient(user: any): Promise<Client> {
-    // Buscar si ya existe el client
-    let client = await this.clientRepository.findOneBy({ userId: user.sub });
+  private async getClientByUser(user: any): Promise<Client> {
+    const client = await this.clientRepository.findOneBy({ userId: user.sub });
     if (!client) {
-      client = this.clientRepository.create({
-        name: user.email.split('@')[0], // placeholder
-        lastName: '',
-        email: user.email,
-        userId: user.sub,
-        active: true
-      });
-      await this.clientRepository.save(client);
+      throw new UnauthorizedException('El usuario no tiene un perfil de cliente asociado.');
     }
     return client;
   }
 
   async create(createReservationDto: CreateReservationDto, user: any) {
-    const client = await this.getOrCreateClient(user);
+    const client = await this.getClientByUser(user);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -127,7 +119,7 @@ export class ReservationsService {
       whereClause.branchId = user.branchId;
     } else {
       // Cliente
-      const client = await this.getOrCreateClient(user);
+      const client = await this.getClientByUser(user);
       whereClause.clientId = client.id;
     }
 
@@ -173,7 +165,7 @@ export class ReservationsService {
       if (isEncargado && reservation.branchId !== user.branchId) {
         throw new UnauthorizedException('No tiene permisos para ver reservas de otras sucursales');
       } else if (!isEncargado) {
-        const client = await this.getOrCreateClient(user);
+        const client = await this.getClientByUser(user);
         if (reservation.clientId !== client.id) {
           throw new UnauthorizedException('Solo puedes ver tus propias reservas');
         }

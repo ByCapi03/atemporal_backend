@@ -171,6 +171,23 @@ export class CatalogService {
     return this.productRepository.save(product);
   }
 
+  async uploadProductArImage(id: number, file: any) {
+    const product = await this.findOneProduct(id);
+
+    // Upload to Cloudinary
+    const uploadResult = await this.cloudinaryService.uploadImage(file);
+
+    // Si ya tenia una imagen AR, borrar la anterior en Cloudinary
+    if (product.arImagePublicId) {
+      await this.cloudinaryService.deleteImage(product.arImagePublicId);
+    }
+
+    product.arImageUrl = uploadResult.secure_url;
+    product.arImagePublicId = uploadResult.public_id;
+
+    return this.productRepository.save(product);
+  }
+
   async removeProduct(id: number) {
     const product = await this.findOneProduct(id);
     product.active = false;

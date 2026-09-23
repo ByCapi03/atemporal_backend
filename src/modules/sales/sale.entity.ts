@@ -7,6 +7,7 @@ import { Client } from '../clients/client.entity';
 import { User } from '../auth/user.entity';
 import { SaleItem } from './sale-item.entity';
 import { Payment } from './payment.entity';
+import { CashSession } from './cash-session.entity';
 import { SaleChannel, SaleStatus } from '../../common/enums/sales.enums';
 
 @Entity('sales')
@@ -41,6 +42,9 @@ export class Sale {
   @Column({ nullable: true })
   userId: number;
 
+  @Column({ nullable: true })
+  cashSessionId: number;
+
   @ManyToOne(() => Branch)
   @JoinColumn({ name: 'branchId' })
   branch: Branch;
@@ -58,4 +62,8 @@ export class Sale {
 
   @OneToMany(() => Payment, (payment) => payment.sale)
   payments: Payment[];
+
+  @ManyToOne(() => CashSession, (cashSession) => cashSession.sales, { nullable: true })
+  @JoinColumn({ name: 'cashSessionId' })
+  cashSession: CashSession;
 }

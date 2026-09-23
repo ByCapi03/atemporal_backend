@@ -24,3 +24,8 @@ export enum PaymentStatus {
   APROBADO = 'APROBADO',
   RECHAZADO = 'RECHAZADO',
 }
+
+export enum CashSessionStatus {
+  OPEN = 'OPEN',
+  CLOSED = 'CLOSED',
+}
