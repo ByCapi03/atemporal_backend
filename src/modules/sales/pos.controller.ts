@@ -1,3 +1,8 @@
+/**
+ * POS CONTROLLER
+ * Flujo POS (Punto de Venta para el Cajero): Expone las rutas /pos/sales 
+ * y /pos/clients usadas por el cajero en la sucursal física.
+ */
 import { Controller, Get, Post, Body, UseGuards, Req, Query } from '@nestjs/common';
 import { PosService } from './pos.service';
 import { CreatePosSaleDto, CreatePosClientDto } from './sales.dto';

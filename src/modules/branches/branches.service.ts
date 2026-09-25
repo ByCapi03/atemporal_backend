@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Branch } from './branch.entity';
 import { City } from './city.entity';
-import { CreateBranchDto, UpdateBranchDto } from './branch.dto';
+import { CreateBranchDto, UpdateBranchDto } from './branches.dto';
 
 @Injectable()
 export class BranchesService {

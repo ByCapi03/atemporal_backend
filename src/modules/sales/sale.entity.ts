@@ -1,14 +1,21 @@
+/**
+ * SALE ENTITY
+ * Entidad de Base de Datos: Representa la "Cabecera" o factura de la venta. 
+ * Guarda el total, el canal (WEB o POS), y se relaciona con el Cliente, 
+ * la Sucursal y (opcionalmente) con una Reserva previa.
+ */
 import {
   Entity, PrimaryGeneratedColumn, Column,
-  ManyToOne, JoinColumn, OneToMany, CreateDateColumn,
+  ManyToOne, JoinColumn, OneToMany, OneToOne, CreateDateColumn,
 } from 'typeorm';
 import { Branch } from '../branches/branch.entity';
 import { Client } from '../clients/client.entity';
 import { User } from '../auth/user.entity';
 import { SaleItem } from './sale-item.entity';
 import { Payment } from './payment.entity';
+import { Reservation } from '../reservations/reservation.entity';
 import { CashSession } from './cash-session.entity';
-import { SaleChannel, SaleStatus } from '../../common/enums/sales.enums';
+import { SaleChannel, SaleStatus } from './sales.enums';
 
 @Entity('sales')
 export class Sale {
@@ -66,4 +73,11 @@ export class Sale {
   @ManyToOne(() => CashSession, (cashSession) => cashSession.sales, { nullable: true })
   @JoinColumn({ name: 'cashSessionId' })
   cashSession: CashSession;
+
+  @Column({ nullable: true })
+  reservationId: number;
+
+  @OneToOne(() => Reservation, (reservation) => reservation.sale, { nullable: true })
+  @JoinColumn({ name: 'reservationId' })
+  reservation: Reservation;
 }

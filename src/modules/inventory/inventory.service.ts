@@ -3,13 +3,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 
 import { CreateInventoryDto, UpdateInventoryDto, RegisterMovementDto } from './inventory.dto';
-import { CreateSupplierDto, UpdateSupplierDto } from './supplier.dto';
+import { CreateSupplierDto, UpdateSupplierDto } from './inventory.dto';
 import { Supplier } from './supplier.entity';
 import { Inventory } from './inventory.entity';
 import { InventoryMovement } from './inventory-movement.entity';
 import { Branch } from '../branches/branch.entity';
 import { Variant } from '../catalog/variant.entity';
-import { MovementType } from '../../common/enums/inventory.enums';
+import { MovementType } from './inventory.enums';
 
 @Injectable()
 export class InventoryService {

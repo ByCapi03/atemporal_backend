@@ -1,3 +1,8 @@
+/**
+ * CASH SESSIONS SERVICE
+ * Flujo de Caja (Turnos): Verifica que un cajero no pueda abrir dos cajas a la vez 
+ * y hace la matemática para el cierre de caja (esperado vs reportado).
+ */
 import { Injectable, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -6,7 +11,7 @@ import { CashSession } from './cash-session.entity';
 import { User } from '../auth/user.entity';
 import { Branch } from '../branches/branch.entity';
 import { OpenCashSessionDto, CloseCashSessionDto } from './sales.dto';
-import { CashSessionStatus, PaymentStatus, SaleStatus, PaymentMethod } from '../../common/enums/sales.enums';
+import { CashSessionStatus, PaymentStatus, SaleStatus, PaymentMethod } from './sales.enums';
 import { Payment } from './payment.entity';
 
 
@@ -183,5 +188,38 @@ export class CashSessionsService {
     openSession.status = CashSessionStatus.CLOSED;
 
     return await this.cashSessionRepository.save(openSession);
+  }
+
+  async findAll(user: any) {
+    const isAdmin = user.roles?.includes('ADMIN');
+    const isEncargado = user.roles?.includes('ENCARGADO');
+
+    if (!isAdmin && !isEncargado) {
+      throw new UnauthorizedException('No tiene permisos para ver las sesiones de caja');
+    }
+
+    let whereClause: any = {};
+    if (isEncargado) {
+      whereClause.branchId = user.branchId;
+    }
+
+    const sessions = await this.cashSessionRepository.find({
+      where: whereClause,
+      relations: { cashier: true, branch: true },
+      order: { openedAt: 'DESC' }
+    });
+
+    return sessions.map(s => ({
+      id: s.id,
+      cashierName: s.cashier?.name || 'Cajero',
+      branchName: s.branch?.name || '',
+      openingAmount: Number(s.openingAmount),
+      closingAmount: s.closingAmount ? Number(s.closingAmount) : null,
+      expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
+      difference: s.difference ? Number(s.difference) : null,
+      status: s.status,
+      openedAt: s.openedAt,
+      closedAt: s.closedAt
+    }));
   }
 }

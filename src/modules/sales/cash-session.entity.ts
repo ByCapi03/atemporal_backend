@@ -1,10 +1,16 @@
+/**
+ * CASH SESSION ENTITY
+ * Entidad de Base de Datos: Representa el "Turno" o "Arqueo de Caja". 
+ * Relaciona a un usuario cajero con una sucursal, guardando con cuánto dinero 
+ * abrió la caja, con cuánto cerró, y la hora de ambas acciones.
+ */
 import {
   Entity, PrimaryGeneratedColumn, Column,
   ManyToOne, JoinColumn, CreateDateColumn, Index
 } from 'typeorm';
 import { Branch } from '../branches/branch.entity';
 import { User } from '../auth/user.entity';
-import { CashSessionStatus } from '../../common/enums/sales.enums';
+import { CashSessionStatus } from './sales.enums';
 import { Sale } from './sale.entity';
 import { OneToMany } from 'typeorm';
 

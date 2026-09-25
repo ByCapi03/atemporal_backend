@@ -1,3 +1,8 @@
+/**
+ * SALE ITEM ENTITY
+ * Entidad de Base de Datos: Representa el "Detalle" de la venta. 
+ * Guarda qué producto (variantId) se vendió, la cantidad y el subtotal.
+ */
 import {
   Entity, PrimaryGeneratedColumn, Column,
   ManyToOne, JoinColumn,

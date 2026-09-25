@@ -1,3 +1,8 @@
+/**
+ * SALES ENUMS
+ * Configuración Central: Define los estados fijos (ej: SaleStatus como PENDIENTE/COMPLETADA, 
+ * PaymentMethod como EFECTIVO/QR/PASARELA, y CashSessionStatus).
+ */
 export enum SaleChannel {
   WEB = 'WEB',
   MOVIL = 'MOVIL',
@@ -25,3 +30,7 @@ export enum PaymentStatus {
   RECHAZADO = 'RECHAZADO',
 }
 
+export enum CashSessionStatus {
+  OPEN = 'OPEN',
+  CLOSED = 'CLOSED',
+}

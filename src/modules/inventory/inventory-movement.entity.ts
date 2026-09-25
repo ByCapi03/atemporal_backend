@@ -4,7 +4,7 @@ import {
 } from 'typeorm';
 import { Inventory } from './inventory.entity';
 import { User } from '../auth/user.entity';
-import { MovementType } from '../../common/enums/inventory.enums';
+import { MovementType } from './inventory.enums';
 
 @Entity('inventory_movements')
 export class InventoryMovement {

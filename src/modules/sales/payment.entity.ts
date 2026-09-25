@@ -1,9 +1,15 @@
+/**
+ * PAYMENT ENTITY
+ * Entidad de Base de Datos: Fundamental para los pagos parciales. 
+ * Una venta (Sale) puede tener múltiples de estos. Registra el monto pagado, 
+ * el método (QR, Efectivo, Tarjeta) y si fue Aprobado o Rechazado.
+ */
 import {
   Entity, PrimaryGeneratedColumn, Column,
   ManyToOne, JoinColumn, CreateDateColumn,
 } from 'typeorm';
 import { Sale } from './sale.entity';
-import { PaymentMethod, PaymentStatus } from '../../common/enums/sales.enums';
+import { PaymentMethod, PaymentStatus } from './sales.enums';
 
 @Entity('payments')
 export class Payment {

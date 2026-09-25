@@ -1,11 +1,12 @@
 import {
   Entity, PrimaryGeneratedColumn, Column,
-  ManyToOne, JoinColumn, OneToMany, CreateDateColumn,
+  ManyToOne, JoinColumn, OneToMany, OneToOne, CreateDateColumn,
 } from 'typeorm';
 import { Client } from '../clients/client.entity';
 import { Branch } from '../branches/branch.entity';
 import { ReservationItem } from './reservation-item.entity';
-import { ReservationStatus } from '../../common/enums/reservation.enums';
+import { Sale } from '../sales/sale.entity';
+import { ReservationStatus } from './reservation.enums';
 
 @Entity('reservations')
 export class Reservation {
@@ -40,4 +41,7 @@ export class Reservation {
 
   @OneToMany(() => ReservationItem, (item) => item.reservation)
   items: ReservationItem[];
+
+  @OneToOne(() => Sale, (sale) => sale.reservation)
+  sale: Sale;
 }

@@ -1,9 +1,15 @@
+/**
+ * NOTIFICATIONS SERVICE
+ * Lógica Core: Envía emails usando el MailService (Nodemailer) y Notificaciones Push 
+ * usando Firebase (FCM). También persiste en la base de datos (in-app notifications).
+ */
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Notification } from './notification.entity';
-import { NotificationDevice } from './notification-device.entity';
+import { Repository, In } from 'typeorm';
+import { Notification, NotificationDevice } from './notification.entity';
 import { User } from '../auth/user.entity';
+import { FirebaseAdminService } from '../../common/firebase/firebase-admin.service';
+import { SendResponse } from 'firebase-admin/messaging';
 
 @Injectable()
 export class NotificationsService {
@@ -13,6 +19,7 @@ export class NotificationsService {
     @InjectRepository(Notification) private notificationRepo: Repository<Notification>,
     @InjectRepository(NotificationDevice) private deviceRepo: Repository<NotificationDevice>,
     @InjectRepository(User) private userRepo: Repository<User>,
+    private readonly firebaseAdmin: FirebaseAdminService,
   ) {}
 
   async findMyNotifications(userId: number) {
@@ -44,40 +51,68 @@ export class NotificationsService {
     return this.deviceRepo.save(device);
   }
 
-  private async sendPushNotification(tokens: string[], payload: any) {
+  private async sendPushNotification(tokens: string[], payload: { title: string; message: string; data?: Record<string, string> }) {
     if (!tokens.length) return;
     
-    // MOCK: Stub for Firebase / APNS
     try {
-      this.logger.log(`[PUSH MOCK] Sending push to ${tokens.length} devices... Payload: ${JSON.stringify(payload)}`);
-      // Here you would do: await firebaseAdmin.messaging().sendMulticast(...)
+      const messaging = this.firebaseAdmin.getMessaging();
+      const message = {
+        tokens,
+        notification: {
+          title: payload.title,
+          body: payload.message,
+        },
+        data: payload.data || {},
+      };
+
+      const response = await messaging.sendEachForMulticast(message);
+      
+      this.logger.log(`[PUSH FCM] Success: ${response.successCount}, Failures: ${response.failureCount}`);
+
+      if (response.failureCount > 0) {
+        const failedTokens: string[] = [];
+        response.responses.forEach((resp: SendResponse, idx: number) => {
+          if (!resp.success) {
+            const errCode = resp.error?.code;
+            if (errCode === 'messaging/invalid-registration-token' || errCode === 'messaging/registration-token-not-registered') {
+              failedTokens.push(tokens[idx]);
+            }
+          }
+        });
+
+        if (failedTokens.length > 0) {
+          await this.deviceRepo.update(
+            { token: In(failedTokens) },
+            { active: false }
+          );
+        }
+      }
     } catch (err) {
-      this.logger.error('Failed to send push notification', err);
+      this.logger.error('Failed to send push notification via FCM', err);
     }
   }
 
-  async notifyNewReservation(branchId: number, reservation: any, clientName: string) {
+  async notifyReservationCreated(branchId: number, reservation: any, clientName: string) {
     try {
-      // Find Encargados and Cajeros in the given branch
+      // Find Encargados in the given branch
       const staffMembers = await this.userRepo.find({
         where: { branchId, active: true },
         relations: { userRoles: { role: true } }
       });
 
       const targetUsers = staffMembers.filter(user => 
-        user.userRoles.some(ur => ur.active && (ur.role.name === 'ENCARGADO' || ur.role.name === 'CAJERO'))
+        user.userRoles.some(ur => ur.active && ur.role.name === 'ENCARGADO')
       );
 
       if (targetUsers.length === 0) return;
 
       const title = `Nueva reserva #${reservation.id}`;
-      const dateStr = new Date(reservation.date).toLocaleDateString();
-      const message = `${clientName} realizó una reserva para el ${dateStr} a las ${reservation.approximateTime}.`;
+      const message = `${clientName} realizó una nueva reserva.`;
 
       const newNotifications = targetUsers.map(user => 
         this.notificationRepo.create({
           userId: user.id,
-          type: 'NEW_RESERVATION',
+          type: 'RESERVATION_CREATED',
           title,
           message,
           reservationId: reservation.id
@@ -96,11 +131,214 @@ export class NotificationsService {
       const tokens = devices.map(d => d.token);
       
       // Attempt to push
-      await this.sendPushNotification(tokens, { title, message, reservationId: reservation.id });
+      await this.sendPushNotification(tokens, { 
+        title, 
+        message, 
+        data: { 
+          type: "RESERVATION_CREATED",
+          reservationId: String(reservation.id),
+          route: "/dashboard/reservations"
+        } 
+      });
 
     } catch (error) {
       this.logger.error(`Error notifying new reservation (Branch: ${branchId}, Res: ${reservation.id})`, error);
       // We swallow the error so we don't break the calling transaction flow
     }
+  }
+
+  async notifyReservationPaid(branchId: number, reservation: any, clientName: string, clientUserId: number) {
+    try {
+      // 1. Notify Client
+      const clientTitle = `Pago confirmado #${reservation.id}`;
+      const clientMessage = `Tu pago ha sido confirmado. La reserva ya se encuentra pagada.`;
+
+      const clientNotification = this.notificationRepo.create({
+        userId: clientUserId,
+        type: 'RESERVATION_CONFIRMED',
+        title: clientTitle,
+        message: clientMessage,
+        reservationId: reservation.id
+      });
+      await this.notificationRepo.save(clientNotification);
+
+      const clientDevices = await this.deviceRepo.find({ where: { userId: clientUserId, active: true }});
+      if (clientDevices.length > 0) {
+        await this.sendPushNotification(clientDevices.map(d => d.token), {
+          title: clientTitle,
+          message: clientMessage,
+          data: { type: 'RESERVATION_CONFIRMED', reservationId: String(reservation.id), route: "/reservations" }
+        });
+      }
+
+      // 2. Notify Encargado
+      const staffMembers = await this.userRepo.find({
+        where: { branchId, active: true },
+        relations: { userRoles: { role: true } }
+      });
+      const targetUsers = staffMembers.filter(user => 
+        user.userRoles.some(ur => ur.active && ur.role.name === 'ENCARGADO')
+      );
+
+      if (targetUsers.length > 0) {
+        const title = `Reserva pagada #${reservation.id}`;
+        const message = `La reserva de ${clientName} ha sido pagada y debe ser preparada.`;
+
+        const newNotifications = targetUsers.map(user => 
+          this.notificationRepo.create({
+            userId: user.id,
+            type: 'RESERVATION_CONFIRMED',
+            title,
+            message,
+            reservationId: reservation.id
+          })
+        );
+        await this.notificationRepo.save(newNotifications);
+
+        const targetUserIds = targetUsers.map(u => u.id);
+        const devices = await this.deviceRepo.createQueryBuilder('device')
+          .where('device.userId IN (:...userIds)', { userIds: targetUserIds })
+          .andWhere('device.active = true')
+          .getMany();
+
+        if (devices.length > 0) {
+          await this.sendPushNotification(devices.map(d => d.token), {
+            title,
+            message,
+            data: { type: 'RESERVATION_CONFIRMED', reservationId: String(reservation.id), route: "/dashboard/reservations" }
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error notifying reservation paid (Res: ${reservation.id})`, error);
+    }
+  }
+
+  async notifyReservationDelivered(branchId: number, reservation: any, cashierName: string, clientUserId: number) {
+    try {
+      // 1. Notify Client
+      const clientTitle = `Reserva entregada #${reservation.id}`;
+      const clientMessage = `Tu reserva #${reservation.id} fue entregada correctamente.`;
+
+      const clientNotification = this.notificationRepo.create({
+        userId: clientUserId,
+        type: 'RESERVATION_ATTENDED',
+        title: clientTitle,
+        message: clientMessage,
+        reservationId: reservation.id
+      });
+      await this.notificationRepo.save(clientNotification);
+
+      const clientDevices = await this.deviceRepo.find({ where: { userId: clientUserId, active: true }});
+      if (clientDevices.length > 0) {
+        await this.sendPushNotification(clientDevices.map(d => d.token), {
+          title: clientTitle,
+          message: clientMessage,
+          data: { type: 'RESERVATION_ATTENDED', reservationId: String(reservation.id), route: "/reservations" }
+        });
+      }
+
+      // 2. Notify Encargado
+      const staffMembers = await this.userRepo.find({
+        where: { branchId, active: true },
+        relations: { userRoles: { role: true } }
+      });
+      const targetUsers = staffMembers.filter(user => 
+        user.userRoles.some(ur => ur.active && ur.role.name === 'ENCARGADO')
+      );
+
+      if (targetUsers.length > 0) {
+        const title = `Reserva entregada #${reservation.id}`;
+        const message = `La reserva #${reservation.id} fue entregada por ${cashierName}.`;
+
+        const newNotifications = targetUsers.map(user => 
+          this.notificationRepo.create({
+            userId: user.id,
+            type: 'RESERVATION_ATTENDED',
+            title,
+            message,
+            reservationId: reservation.id
+          })
+        );
+        await this.notificationRepo.save(newNotifications);
+
+        const targetUserIds = targetUsers.map(u => u.id);
+        const devices = await this.deviceRepo.createQueryBuilder('device')
+          .where('device.userId IN (:...userIds)', { userIds: targetUserIds })
+          .andWhere('device.active = true')
+          .getMany();
+
+        if (devices.length > 0) {
+          await this.sendPushNotification(devices.map(d => d.token), {
+            title,
+            message,
+            data: { type: 'RESERVATION_ATTENDED', reservationId: String(reservation.id), route: "/dashboard/reservations" }
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error notifying reservation delivered (Res: ${reservation.id})`, error);
+    }
+  }
+
+  async notifyReservationStatusUpdated(branchId: number, reservation: any, clientUserId: number, newStatus: string) {
+    try {
+      const clientTitle = `Estado de reserva #${reservation.id}`;
+      const clientMessage = `Tu reserva ha cambiado a estado: ${newStatus}.`;
+
+      const clientNotification = this.notificationRepo.create({
+        userId: clientUserId,
+        type: `RESERVATION_STATUS`,
+        title: clientTitle,
+        message: clientMessage,
+        reservationId: reservation.id
+      });
+      await this.notificationRepo.save(clientNotification);
+
+      const clientDevices = await this.deviceRepo.find({ where: { userId: clientUserId, active: true }});
+      if (clientDevices.length > 0) {
+        await this.sendPushNotification(clientDevices.map(d => d.token), {
+          title: clientTitle,
+          message: clientMessage,
+          data: { type: 'RESERVATION_STATUS', reservationId: String(reservation.id), route: "/reservations" }
+        });
+      }
+    } catch (error) {
+      this.logger.error(`Error notifying status update (Res: ${reservation.id})`, error);
+    }
+  }
+
+  // TEMPORARY FOR TESTING
+  async testPushNotification(userId: number) {
+    const title = 'Prueba de notificación';
+    const message = 'Firebase Cloud Messaging está funcionando.';
+
+    const notification = this.notificationRepo.create({
+      userId,
+      type: 'TEST',
+      title,
+      message,
+    });
+    await this.notificationRepo.save(notification);
+
+    const devices = await this.deviceRepo.find({
+      where: { userId, active: true }
+    });
+
+    const tokens = devices.map(d => d.token);
+
+    if (tokens.length > 0) {
+      await this.sendPushNotification(tokens, {
+        title,
+        message,
+        data: {
+          type: 'TEST',
+          route: '/dashboard'
+        }
+      });
+      return { success: true, message: `Sent to ${tokens.length} devices` };
+    }
+
+    return { success: false, message: 'No active devices found' };
   }
 }

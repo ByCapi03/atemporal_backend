@@ -1,3 +1,8 @@
+/**
+ * SALES CONTROLLER
+ * Flujo de Ventas Generales: Expone rutas generales, como /sales/my 
+ * (para que el cliente vea su historial de compras en la app).
+ */
 import { Controller, Get, Query, Param, UseGuards, Request } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { AuthGuard } from '../../common/guards/auth.guard';

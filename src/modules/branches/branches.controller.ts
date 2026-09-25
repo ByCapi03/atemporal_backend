@@ -1,7 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
 import { BranchesService } from './branches.service';
-import { CreateBranchDto } from './branch.dto';
-import { UpdateBranchDto } from './branch.dto';
+import { CreateBranchDto, UpdateBranchDto } from './branches.dto';
 
 @Controller('branches')
 export class BranchesController {

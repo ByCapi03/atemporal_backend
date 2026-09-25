@@ -1,3 +1,9 @@
+/**
+ * SALES MODULE
+ * Configuración Central: Es el pegamento del módulo. Registra todos los controladores, 
+ * servicios y entidades relacionados con ventas, y además importa los módulos de 
+ * Inventory y Branches (porque una venta afecta stock y depende de una sucursal).
+ */
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { SalesController } from './sales.controller';

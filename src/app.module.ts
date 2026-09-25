@@ -15,9 +15,12 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { StoreModule } from './modules/store/store.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { FirebaseModule } from './common/firebase/firebase.module';
+import { WebsocketModule } from './common/realtime/websocket.module';
 
 @Module({
   imports: [
+    FirebaseModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),
@@ -48,6 +51,7 @@ import { ReportsModule } from './modules/reports/reports.module';
     StoreModule,
     DashboardModule,
     ReportsModule,
+    WebsocketModule,
   ],
   controllers: [AppController],
   providers: [AppService],

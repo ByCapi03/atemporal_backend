@@ -42,4 +42,19 @@ export class ReservationsController {
   remove(@Param('id') id: string) {
     return this.reservationsService.remove(+id);
   }
+
+  @Post(':id/pay')
+  pay(@Param('id') id: string, @Body('paymentOption') paymentOption: 'DEPOSIT_30' | 'FULL', @Request() req: any) {
+    return this.reservationsService.pay(+id, paymentOption, req.user);
+  }
+
+  @Post(':id/deliver')
+  deliver(@Param('id') id: string, @Request() req: any) {
+    return this.reservationsService.deliver(+id, req.user);
+  }
+
+  @Post(':id/pay-and-deliver')
+  payAndDeliver(@Param('id') id: string, @Body('method') method: string, @Request() req: any) {
+    return this.reservationsService.payAndDeliver(+id, method, req.user);
+  }
 }

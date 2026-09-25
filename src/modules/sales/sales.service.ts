@@ -1,3 +1,9 @@
+/**
+ * SALES SERVICE
+ * Flujo de Ventas Generales: Lógica general de consultas. Se asegura, por ejemplo, 
+ * de que en /sales/my un cliente vea exclusivamente las compras asociadas a su 
+ * clientId y no las del resto del sistema.
+ */
 import { Injectable, NotFoundException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -22,7 +28,7 @@ export class SalesService {
   }
 
   async findMySales(user: any) {
-    if (!user.roles?.includes('CLIENT')) {
+    if (!user.roles?.includes('CLIENTE')) {
       throw new ForbiddenException('Endpoint exclusivo para clientes');
     }
     const client = await this.getClientByUser(user);
@@ -48,7 +54,7 @@ export class SalesService {
   }
 
   async findOneMySale(id: number, user: any) {
-    if (!user.roles?.includes('CLIENT')) {
+    if (!user.roles?.includes('CLIENTE')) {
       throw new ForbiddenException('Endpoint exclusivo para clientes');
     }
     const client = await this.getClientByUser(user);

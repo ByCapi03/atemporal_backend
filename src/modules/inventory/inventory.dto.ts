@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { IsNumber, IsOptional, IsPositive, Min, IsEnum, IsString, IsInt, ValidateIf } from 'class-validator';
-import { MovementType } from '../../common/enums/inventory.enums';
+import { IsNumber, IsOptional, IsPositive, Min, IsEnum, IsString, IsInt, ValidateIf, IsNotEmpty, IsBoolean, IsEmail } from 'class-validator';
+import { MovementType } from './inventory.enums';
 
 export class CreateInventoryDto {
   @IsInt()
@@ -39,3 +39,31 @@ export class RegisterMovementDto {
   @IsOptional()
   observation?: string;
 }
+
+export class CreateSupplierDto {
+  @IsString()
+  @IsNotEmpty({ message: 'El nombre es obligatorio' })
+  name: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'El NIT es obligatorio' })
+  nit: string;
+
+  @IsEmail()
+  @IsOptional()
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
+}
+
+export class UpdateSupplierDto extends PartialType(CreateSupplierDto) {}

@@ -1,3 +1,9 @@
+/**
+ * POS SERVICE
+ * Flujo POS (Punto de Venta para el Cajero): Contiene la lógica pesada de la caja. 
+ * Se asegura de que el cajero tenga una caja abierta (CashSession) antes de vender, 
+ * descuenta el inventario físico y crea al vuelo un cliente nuevo si no existía.
+ */
 import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, ILike, Or } from 'typeorm';
@@ -13,8 +19,8 @@ import { Payment } from './payment.entity';
 import { InventoryMovement } from '../inventory/inventory-movement.entity';
 
 import { CreatePosSaleDto, CreatePosClientDto } from './sales.dto';
-import { SaleChannel, SaleStatus, PaymentStatus, CashSessionStatus, PaymentMethod } from '../../common/enums/sales.enums';
-import { MovementType } from '../../common/enums/inventory.enums';
+import { SaleChannel, SaleStatus, PaymentStatus, CashSessionStatus, PaymentMethod } from './sales.enums';
+import { MovementType } from '../inventory/inventory.enums';
 
 @Injectable()
 export class PosService {

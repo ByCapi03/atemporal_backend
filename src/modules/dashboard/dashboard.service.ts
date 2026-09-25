@@ -5,8 +5,9 @@ import { Sale } from '../sales/sale.entity';
 import { Reservation } from '../reservations/reservation.entity';
 import { Inventory } from '../inventory/inventory.entity';
 import { SaleItem } from '../sales/sale-item.entity';
-import { SaleStatus, SaleChannel } from '../../common/enums/sales.enums';
-import { ReservationStatus } from '../../common/enums/reservation.enums';
+import { User } from '../auth/user.entity';
+import { SaleStatus, SaleChannel } from '../sales/sales.enums';
+import { ReservationStatus } from '../reservations/reservation.enums';
 
 @Injectable()
 export class DashboardService {
@@ -15,6 +16,7 @@ export class DashboardService {
     @InjectRepository(Reservation) private readonly reservationRepository: Repository<Reservation>,
     @InjectRepository(Inventory) private readonly inventoryRepository: Repository<Inventory>,
     @InjectRepository(SaleItem) private readonly saleItemRepository: Repository<SaleItem>,
+    @InjectRepository(User) private readonly userRepository: Repository<User>,
   ) {}
 
   async getMetrics(user: any) {
@@ -56,7 +58,7 @@ export class DashboardService {
     const salesTodayAmount = Number(todayRaw?.totalAmount || 0);
     const salesTodayCount = Number(todayRaw?.salesCount || 0);
 
-    // 2. Active Reservations
+    // 2. Reservations breakdown
     const resQb = this.reservationRepository.createQueryBuilder('res')
       .where('res.status IN (:...statuses)', { statuses: activeResStatuses });
 
@@ -64,7 +66,33 @@ export class DashboardService {
       resQb.andWhere('res.branchId = :branchId', { branchId });
     }
 
-    const activeReservations = await resQb.getCount();
+    const activeReservationsRaw = await resQb.getMany();
+    const activeReservations = activeReservationsRaw.length;
+    
+    let resPendientes = 0;
+    let resConfirmadasPreparando = 0;
+    let resListas = 0;
+
+    activeReservationsRaw.forEach(r => {
+      if (r.status === ReservationStatus.PENDIENTE) resPendientes++;
+      else if (r.status === ReservationStatus.CONFIRMADA || r.status === ReservationStatus.PREPARANDO) resConfirmadasPreparando++;
+      else if (r.status === ReservationStatus.LISTA) resListas++;
+    });
+
+    // 2.5. Active cashiers
+    let activeCashiers = 0;
+    const usersQb = this.userRepository.createQueryBuilder('user')
+      .innerJoin('user.userRoles', 'userRole')
+      .innerJoin('userRole.role', 'role')
+      .where('role.name = :roleName', { roleName: 'CAJERO' })
+      .andWhere('userRole.active = :urActive', { urActive: true })
+      .andWhere('user.active = :active', { active: true });
+      
+    if (!isAdmin && branchId) {
+      usersQb.andWhere('user.branchId = :branchId', { branchId });
+    }
+    
+    activeCashiers = await usersQb.getCount();
 
     // 3. Low Stock Count: (stock - reserved) <= stockMin
     const invQb = this.inventoryRepository.createQueryBuilder('inv')
@@ -192,6 +220,10 @@ export class DashboardService {
       salesTodayAmount,
       salesTodayCount,
       activeReservations,
+      resPendientes,
+      resConfirmadasPreparando,
+      resListas,
+      activeCashiers,
       lowStockCount,
       salesLast7Days,
       salesByChannel,

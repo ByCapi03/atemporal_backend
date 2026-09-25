@@ -6,8 +6,8 @@ import { SaleItem } from '../sales/sale-item.entity';
 import { Payment } from '../sales/payment.entity';
 import { Inventory } from '../inventory/inventory.entity';
 import { Reservation } from '../reservations/reservation.entity';
-import { SaleStatus, SaleChannel, PaymentMethod } from '../../common/enums/sales.enums';
-import { ReservationStatus } from '../../common/enums/reservation.enums';
+import { SaleStatus, SaleChannel, PaymentMethod } from '../sales/sales.enums';
+import { ReservationStatus } from '../reservations/reservation.enums';
 
 @Injectable()
 export class ReportsService {

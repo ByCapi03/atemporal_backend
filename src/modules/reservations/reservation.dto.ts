@@ -1,7 +1,7 @@
 import { PartialType } from '@nestjs/mapped-types';
 import { IsInt, IsPositive, IsString, IsOptional, ValidateNested, ArrayMinSize, IsArray, IsEnum, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ReservationStatus } from '../../common/enums/reservation.enums';
+import { ReservationStatus } from './reservation.enums';
 
 export class ReservationItemDto {
   @IsInt()

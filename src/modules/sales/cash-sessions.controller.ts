@@ -1,3 +1,7 @@
+/**
+ * CASH SESSIONS CONTROLLER
+ * Flujo de Caja (Turnos): Expone las rutas /cash-sessions/open, /cash-sessions/close, etc.
+ */
 import { Controller, Post, Get, Body, UseGuards, Req } from '@nestjs/common';
 import { CashSessionsService } from './cash-sessions.service';
 import { OpenCashSessionDto } from './sales.dto';
@@ -24,5 +28,10 @@ export class CashSessionsController {
   closeSession(@Req() req: any, @Body() closeCashSessionDto: import('./sales.dto').CloseCashSessionDto) {
     const userId = req.user.sub;
     return this.cashSessionsService.closeSession(userId, closeCashSessionDto);
+  }
+
+  @Get()
+  findAll(@Req() req: any) {
+    return this.cashSessionsService.findAll(req.user);
   }
 }
