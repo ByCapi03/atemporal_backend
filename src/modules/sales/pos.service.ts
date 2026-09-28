@@ -17,6 +17,7 @@ import { Sale } from './sale.entity';
 import { SaleItem } from './sale-item.entity';
 import { Payment } from './payment.entity';
 import { InventoryMovement } from '../inventory/inventory-movement.entity';
+import { CatalogPricingService } from '../catalog/catalog-pricing.service';
 
 import { CreatePosSaleDto, CreatePosClientDto } from './sales.dto';
 import { SaleChannel, SaleStatus, PaymentStatus, CashSessionStatus, PaymentMethod } from './sales.enums';
@@ -29,7 +30,8 @@ export class PosService {
     @InjectRepository(Branch) private branchRepository: Repository<Branch>,
     @InjectRepository(Inventory) private inventoryRepository: Repository<Inventory>,
     @InjectRepository(Client) private clientRepository: Repository<Client>,
-    private dataSource: DataSource
+    private dataSource: DataSource,
+    private catalogPricingService: CatalogPricingService
   ) {}
 
   private async getValidCashierBranch(userId: number) {
@@ -72,7 +74,10 @@ export class PosService {
       },
       relations: {
         variant: {
-          product: true,
+          product: {
+            collection: { season: true },
+            promotions: true
+          },
           size: true,
           color: true
         }
@@ -84,6 +89,7 @@ export class PosService {
     for (const inv of inventories) {
       const available = inv.stock - inv.reserved;
       if (available > 0) {
+        const pricing = this.catalogPricingService.getEffectivePrice(inv.variant.product);
         results.push({
           productId: inv.variant.product.id,
           variantId: inv.variant.id,
@@ -92,7 +98,9 @@ export class PosService {
           sku: inv.variant.sku,
           size: inv.variant.size.name,
           color: inv.variant.color.name,
-          price: inv.variant.product.price,
+          price: pricing.basePrice,
+          finalPrice: pricing.finalPrice,
+          discount: pricing.discount,
           available
         });
       }
@@ -160,6 +168,8 @@ export class PosService {
           .createQueryBuilder('inv')
           .innerJoinAndSelect('inv.variant', 'variant')
           .innerJoinAndSelect('variant.product', 'product')
+          .leftJoinAndSelect('product.promotions', 'promotions')
+          .leftJoinAndSelect('product.collection', 'collection')
           .where('inv.branchId = :branchId AND inv.variantId = :variantId', {
             branchId,
             variantId: item.variantId,
@@ -183,7 +193,8 @@ export class PosService {
         }
 
         // Calculation
-        const unitPriceNum = Number(inventory.variant.product.price);
+        const pricing = this.catalogPricingService.getEffectivePrice(inventory.variant.product);
+        const unitPriceNum = pricing.finalPrice; // Pos must use final price
         const subtotalNum = unitPriceNum * item.quantity;
         total += subtotalNum;
 

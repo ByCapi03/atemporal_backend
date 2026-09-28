@@ -59,6 +59,10 @@ export class CreateProductDto {
   @IsEnum(ArGarmentType)
   @IsOptional()
   arType?: ArGarmentType;
+
+  @IsNumber()
+  @IsOptional()
+  collectionId?: number;
 }
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
 
@@ -84,3 +88,74 @@ export class CreateVariantDto {
   active?: boolean;
 }
 export class UpdateVariantDto extends PartialType(CreateVariantDto) {}
+
+export class CreateSeasonDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  startDate: string;
+
+  @IsString()
+  @IsNotEmpty()
+  endDate: string;
+
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
+}
+export class UpdateSeasonDto extends PartialType(CreateSeasonDto) {}
+
+export class CreateCollectionDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsNumber()
+  @IsNotEmpty()
+  seasonId: number;
+
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
+}
+export class UpdateCollectionDto extends PartialType(CreateCollectionDto) {}
+
+export class CreatePromotionDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsEnum(['PERCENTAGE', 'FIXED'])
+  @IsNotEmpty()
+  type: 'PERCENTAGE' | 'FIXED';
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  value: number;
+
+  @IsString()
+  @IsNotEmpty()
+  startDate: string;
+
+  @IsString()
+  @IsNotEmpty()
+  endDate: string;
+
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
+
+  @IsNumber({}, { each: true })
+  @IsOptional()
+  productIds?: number[];
+}
+export class UpdatePromotionDto extends PartialType(CreatePromotionDto) {}
+

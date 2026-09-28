@@ -33,6 +33,10 @@ export class CreateReservationDto {
   @ValidateNested({ each: true })
   @Type(() => ReservationItemDto)
   items: ReservationItemDto[];
+
+  @IsString()
+  @IsEnum(['DEPOSIT_30', 'FULL'])
+  paymentOption: 'DEPOSIT_30' | 'FULL';
 }
 
 export class UpdateReservationDto {

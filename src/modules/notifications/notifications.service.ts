@@ -303,6 +303,48 @@ export class NotificationsService {
           data: { type: 'RESERVATION_STATUS', reservationId: String(reservation.id), route: "/reservations" }
         });
       }
+
+      if (newStatus === 'LISTA') {
+        // Notify Cajeros of the branch
+        const staffMembers = await this.userRepo.find({
+          where: { branchId, active: true },
+          relations: { userRoles: { role: true } }
+        });
+        const targetUsers = staffMembers.filter(user => 
+          user.userRoles.some(ur => ur.active && ur.role.name === 'CAJERO')
+        );
+
+        if (targetUsers.length > 0) {
+          const clientName = reservation.client ? `${reservation.client.name} ${reservation.client.lastName}` : 'Cliente';
+          const cajeroTitle = `Reserva Lista #${reservation.id}`;
+          const cajeroMessage = `La reserva de ${clientName} está lista para ser cobrada/entregada.`;
+
+          const cajeroNotifications = targetUsers.map(u => 
+            this.notificationRepo.create({
+              userId: u.id,
+              type: 'RESERVATION_READY',
+              title: cajeroTitle,
+              message: cajeroMessage,
+              reservationId: reservation.id
+            })
+          );
+          await this.notificationRepo.save(cajeroNotifications);
+
+          const targetUserIds = targetUsers.map(u => u.id);
+          const devices = await this.deviceRepo.createQueryBuilder('device')
+            .where('device.userId IN (:...userIds)', { userIds: targetUserIds })
+            .andWhere('device.active = true')
+            .getMany();
+
+          if (devices.length > 0) {
+            await this.sendPushNotification(devices.map(d => d.token), {
+              title: cajeroTitle,
+              message: cajeroMessage,
+              data: { type: 'RESERVATION_READY', reservationId: String(reservation.id), route: "/pos" }
+            });
+          }
+        }
+      }
     } catch (error) {
       this.logger.error(`Error notifying status update (Res: ${reservation.id})`, error);
     }

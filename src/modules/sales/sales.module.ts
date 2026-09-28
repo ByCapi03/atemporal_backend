@@ -21,19 +21,23 @@ import { Variant } from '../catalog/variant.entity';
 import { Client } from '../clients/client.entity';
 import { InventoryMovement } from '../inventory/inventory-movement.entity';
 
-import { CashSessionsController } from './cash-sessions.controller';
 import { CashSessionsService } from './cash-sessions.service';
+import { CashSessionsController } from './cash-sessions.controller';
 import { PosController } from './pos.controller';
 import { PosService } from './pos.service';
+import { PaymentGatewayService } from './payment-gateway.service';
+import { PaymentGatewayController } from './payment-gateway.controller';
 import { AuthModule } from '../auth/auth.module';
+import { CatalogModule } from '../catalog/catalog.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Sale, SaleItem, Payment, CashSession, Branch, User, Inventory, Product, Variant, Client]),
-    AuthModule
+    AuthModule,
+    CatalogModule
   ],
-  controllers: [SalesController, CashSessionsController, PosController],
-  providers: [SalesService, CashSessionsService, PosService],
-  exports: [SalesService, CashSessionsService, PosService]
+  controllers: [SalesController, CashSessionsController, PosController, PaymentGatewayController],
+  providers: [SalesService, CashSessionsService, PosService, PaymentGatewayService],
+  exports: [SalesService, CashSessionsService, PosService, PaymentGatewayService]
 })
 export class SalesModule {}

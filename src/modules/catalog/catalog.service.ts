@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { CloudinaryService } from '../../common/cloudinary.service';
 
 import {
@@ -8,7 +8,10 @@ import {
   CreateVariantDto, UpdateVariantDto,
   CreateCategoryDto, UpdateCategoryDto,
   CreateSizeDto, UpdateSizeDto,
-  CreateColorDto, UpdateColorDto
+  CreateColorDto, UpdateColorDto,
+  CreateSeasonDto, UpdateSeasonDto,
+  CreateCollectionDto, UpdateCollectionDto,
+  CreatePromotionDto, UpdatePromotionDto
 } from './catalog.dto';
 
 import { Category } from './category.entity';
@@ -16,7 +19,11 @@ import { Size } from './size.entity';
 import { Color } from './color.entity';
 import { Product } from './product.entity';
 import { Variant } from './variant.entity';
+import { Season } from './season.entity';
+import { Collection } from './collection.entity';
+import { Promotion } from './promotion.entity';
 import { Supplier } from '../inventory/supplier.entity';
+import { CatalogPricingService } from './catalog-pricing.service';
 
 @Injectable()
 export class CatalogService {
@@ -26,7 +33,11 @@ export class CatalogService {
     @InjectRepository(Color) private readonly colorRepository: Repository<Color>,
     @InjectRepository(Product) private readonly productRepository: Repository<Product>,
     @InjectRepository(Variant) private readonly variantRepository: Repository<Variant>,
-    private cloudinaryService: CloudinaryService
+    @InjectRepository(Season) private readonly seasonRepository: Repository<Season>,
+    @InjectRepository(Collection) private readonly collectionRepository: Repository<Collection>,
+    @InjectRepository(Promotion) private readonly promotionRepository: Repository<Promotion>,
+    private cloudinaryService: CloudinaryService,
+    private catalogPricingService: CatalogPricingService
   ) {}
 
   // --- CATEGORIES ---
@@ -135,15 +146,26 @@ export class CatalogService {
     return this.productRepository.save(product);
   }
   async findAllProducts() {
-    return this.productRepository.find({
-      relations: { category: true, variants: true },
+    const products = await this.productRepository.find({
+      relations: { category: true, variants: true, collection: { season: true }, promotions: true },
       order: { id: 'ASC' }
+    });
+
+    return products.map(p => {
+      const pricing = this.catalogPricingService.getEffectivePrice(p);
+      return {
+        ...p,
+        basePrice: pricing.basePrice,
+        finalPrice: pricing.finalPrice,
+        discount: pricing.discount,
+        winningPromotion: pricing.promotion
+      };
     });
   }
   async findOneProduct(id: number) {
     const product = await this.productRepository.findOne({
       where: { id },
-      relations: { category: true, variants: true }
+      relations: { category: true, variants: true, collection: true, promotions: true }
     });
     if (!product) throw new NotFoundException(`Producto #${id} no encontrado`);
     return product;
@@ -264,5 +286,124 @@ export class CatalogService {
     variant.active = false;
     await this.variantRepository.save(variant);
     return { success: true, message: `Variante ${id} desactivada` };
+  }
+
+  // --- SEASONS ---
+  async createSeason(createSeasonDto: CreateSeasonDto) {
+    if (new Date(createSeasonDto.startDate) >= new Date(createSeasonDto.endDate)) {
+      throw new BadRequestException('startDate debe ser menor que endDate');
+    }
+    const season = this.seasonRepository.create(createSeasonDto);
+    return this.seasonRepository.save(season);
+  }
+  async findAllSeasons() {
+    return this.seasonRepository.find({ order: { id: 'ASC' } });
+  }
+  async findOneSeason(id: number) {
+    const season = await this.seasonRepository.findOneBy({ id });
+    if (!season) throw new NotFoundException(`Temporada #${id} no encontrada`);
+    return season;
+  }
+  async updateSeason(id: number, updateSeasonDto: UpdateSeasonDto) {
+    const season = await this.findOneSeason(id);
+    Object.assign(season, updateSeasonDto);
+    
+    if (new Date(season.startDate) >= new Date(season.endDate)) {
+      throw new BadRequestException('startDate debe ser menor que endDate');
+    }
+
+    return this.seasonRepository.save(season);
+  }
+  async removeSeason(id: number) {
+    const season = await this.findOneSeason(id);
+    season.active = false;
+    await this.seasonRepository.save(season);
+    return { success: true, message: `Temporada ${id} desactivada` };
+  }
+
+  // --- COLLECTIONS ---
+  async createCollection(createCollectionDto: CreateCollectionDto) {
+    const season = await this.findOneSeason(createCollectionDto.seasonId);
+    if (!season) throw new NotFoundException(`Temporada #${createCollectionDto.seasonId} no encontrada`);
+    const collection = this.collectionRepository.create(createCollectionDto);
+    return this.collectionRepository.save(collection);
+  }
+  async findAllCollections() {
+    return this.collectionRepository.find({ relations: { season: true }, order: { id: 'ASC' } });
+  }
+  async findOneCollection(id: number) {
+    const collection = await this.collectionRepository.findOne({ where: { id }, relations: { season: true } });
+    if (!collection) throw new NotFoundException(`Colección #${id} no encontrada`);
+    return collection;
+  }
+  async updateCollection(id: number, updateCollectionDto: UpdateCollectionDto) {
+    const collection = await this.findOneCollection(id);
+    if (updateCollectionDto.seasonId) {
+      const season = await this.findOneSeason(updateCollectionDto.seasonId);
+      if (!season) throw new NotFoundException(`Temporada #${updateCollectionDto.seasonId} no encontrada`);
+    }
+    Object.assign(collection, updateCollectionDto);
+    return this.collectionRepository.save(collection);
+  }
+  async removeCollection(id: number) {
+    const collection = await this.findOneCollection(id);
+    collection.active = false;
+    await this.collectionRepository.save(collection);
+    return { success: true, message: `Colección ${id} desactivada` };
+  }
+
+  // --- PROMOTIONS ---
+  async createPromotion(createPromotionDto: CreatePromotionDto) {
+    if (new Date(createPromotionDto.startDate) >= new Date(createPromotionDto.endDate)) {
+      throw new BadRequestException('startDate debe ser menor que endDate');
+    }
+    if (createPromotionDto.type === 'PERCENTAGE' && (createPromotionDto.value <= 0 || createPromotionDto.value > 100)) {
+      throw new BadRequestException('Para PERCENTAGE, el valor debe estar entre 1 y 100');
+    }
+    if (createPromotionDto.type === 'FIXED' && createPromotionDto.value <= 0) {
+      throw new BadRequestException('Para FIXED, el valor debe ser mayor a 0');
+    }
+
+    const { productIds, ...promoData } = createPromotionDto;
+    const promotion = this.promotionRepository.create(promoData);
+    if (productIds && productIds.length > 0) {
+      promotion.products = await this.productRepository.find({ where: { id: In(productIds) } });
+    }
+    return this.promotionRepository.save(promotion);
+  }
+  async findAllPromotions() {
+    return this.promotionRepository.find({ relations: { products: true }, order: { id: 'ASC' } });
+  }
+  async findOnePromotion(id: number) {
+    const promotion = await this.promotionRepository.findOne({ where: { id }, relations: { products: true } });
+    if (!promotion) throw new NotFoundException(`Promoción #${id} no encontrada`);
+    return promotion;
+  }
+  async updatePromotion(id: number, updatePromotionDto: UpdatePromotionDto) {
+    const promotion = await this.findOnePromotion(id);
+    const { productIds, ...promoData } = updatePromotionDto;
+    
+    Object.assign(promotion, promoData);
+
+    if (new Date(promotion.startDate) >= new Date(promotion.endDate)) {
+      throw new BadRequestException('startDate debe ser menor que endDate');
+    }
+    if (promotion.type === 'PERCENTAGE' && (promotion.value <= 0 || promotion.value > 100)) {
+      throw new BadRequestException('Para PERCENTAGE, el valor debe estar entre 1 y 100');
+    }
+    if (promotion.type === 'FIXED' && promotion.value <= 0) {
+      throw new BadRequestException('Para FIXED, el valor debe ser mayor a 0');
+    }
+
+    if (productIds) {
+      promotion.products = await this.productRepository.find({ where: { id: In(productIds) } });
+    }
+    return this.promotionRepository.save(promotion);
+  }
+  async removePromotion(id: number) {
+    const promotion = await this.findOnePromotion(id);
+    promotion.active = false;
+    await this.promotionRepository.save(promotion);
+    return { success: true, message: `Promoción ${id} desactivada` };
   }
 }

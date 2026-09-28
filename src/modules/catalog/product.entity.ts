@@ -1,9 +1,11 @@
 import {
   Entity, PrimaryGeneratedColumn, Column,
-  ManyToOne, JoinColumn, OneToMany,
+  ManyToOne, JoinColumn, OneToMany, ManyToMany
 } from 'typeorm';
 import { Category } from './category.entity';
 import { Variant } from './variant.entity';
+import { Collection } from './collection.entity';
+import { Promotion } from './promotion.entity';
 
 export enum ArGarmentType {
   TOP = 'TOP',
@@ -52,4 +54,14 @@ export class Product {
 
   @OneToMany(() => Variant, (variant) => variant.product)
   variants: Variant[];
+
+  @Column({ nullable: true })
+  collectionId: number;
+
+  @ManyToOne(() => Collection, (collection) => collection.products, { nullable: true })
+  @JoinColumn({ name: 'collectionId' })
+  collection: Collection;
+
+  @ManyToMany(() => Promotion, (promotion) => promotion.products)
+  promotions: Promotion[];
 }

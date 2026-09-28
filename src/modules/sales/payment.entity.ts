@@ -31,6 +31,9 @@ export class Payment {
   @Column({ type: 'varchar', nullable: true })
   transactionReference: string;
 
+  @Column({ type: 'varchar', nullable: true, unique: true })
+  stripePaymentIntentId: string;
+
   @Column()
   saleId: number;
 

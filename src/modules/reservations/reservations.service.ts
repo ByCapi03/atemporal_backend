@@ -19,6 +19,16 @@ import { SaleItem } from '../sales/sale-item.entity';
 import { Payment } from '../sales/payment.entity';
 import { SaleChannel, SaleStatus, PaymentMethod, PaymentStatus } from '../sales/sales.enums';
 import { AppGateway } from '../../common/realtime/app.gateway';
+import { PaymentGatewayService } from '../sales/payment-gateway.service';
+import { CatalogPricingService } from '../catalog/catalog-pricing.service';
+
+export interface PaymentSummary {
+  total: number;
+  paidAmount: number;
+  remainingAmount: number;
+  depositAmount: number;
+  paymentState: 'PENDIENTE' | 'PARCIAL' | 'PAGADO';
+}
 
 @Injectable()
 export class ReservationsService {
@@ -30,6 +40,8 @@ export class ReservationsService {
     private dataSource: DataSource,
     private notificationsService: NotificationsService,
     private readonly appGateway: AppGateway,
+    private readonly paymentGatewayService: PaymentGatewayService,
+    private readonly catalogPricingService: CatalogPricingService,
   ) {}
 
   private async getClientByUser(user: any): Promise<Client> {
@@ -40,7 +52,43 @@ export class ReservationsService {
     return client;
   }
 
-  async create(createReservationDto: CreateReservationDto, user: any) {
+  private calculatePaymentSummary(reservation: Reservation): PaymentSummary {
+    let total = 0;
+    if (reservation.sale && reservation.sale.total) {
+      total = Number(reservation.sale.total);
+    } else if (reservation.items) {
+      total = reservation.items.reduce((sum, item) => {
+        const price = item.variant?.product?.price || 0;
+        return sum + (Number(price) * item.quantity);
+      }, 0);
+    }
+    total = Number(total.toFixed(2));
+    
+    let paidAmount = 0;
+    if (reservation.sale && reservation.sale.payments) {
+      paidAmount = reservation.sale.payments
+        .filter(p => p.status === PaymentStatus.APROBADO)
+        .reduce((sum, p) => sum + Number(p.amount), 0);
+    }
+    paidAmount = Number(paidAmount.toFixed(2));
+    
+    const remainingAmount = Number((total - paidAmount).toFixed(2));
+    const depositAmount = Number((total * 0.3).toFixed(2));
+    
+    let paymentState: 'PENDIENTE' | 'PARCIAL' | 'PAGADO' = 'PENDIENTE';
+    if (paidAmount >= total && total > 0) paymentState = 'PAGADO';
+    else if (paidAmount > 0) paymentState = 'PARCIAL';
+
+    return {
+      total,
+      paidAmount,
+      remainingAmount,
+      depositAmount,
+      paymentState
+    };
+  }
+
+  async createIntent(createReservationDto: CreateReservationDto, user: any) {
     const client = await this.getClientByUser(user);
 
     const queryRunner = this.dataSource.createQueryRunner();
@@ -50,9 +98,9 @@ export class ReservationsService {
     try {
       // Validar branch
       const branch = await queryRunner.manager.findOne(Branch, { where: { id: createReservationDto.branchId, active: true } });
-      if (!branch) throw new NotFoundException(`La sucursal ${createReservationDto.branchId} no existe o no est activa`);
+      if (!branch) throw new NotFoundException(`La sucursal ${createReservationDto.branchId} no existe o no está activa`);
 
-      // Crear Entidad Reserva
+      // Crear Entidad Reserva (PENDIENTE esperando pago)
       const reservation = queryRunner.manager.create(Reservation, {
         status: ReservationStatus.PENDIENTE,
         date: createReservationDto.date,
@@ -62,11 +110,17 @@ export class ReservationsService {
       });
       const savedReservation = await queryRunner.manager.save(reservation);
 
+      let total = 0;
+      const reservationItemsToSave = [];
+      const saleItemsToSave = [];
+      const inventoriesToUpdate = [];
+      const inventoryMovementsToSave = [];
+
       for (const itemDto of createReservationDto.items) {
-        // Validar variante
+        // Validar variante y producto
         const variant = await queryRunner.manager.findOne(Variant, { where: { id: itemDto.variantId, active: true }, relations: { product: true } });
         if (!variant || !variant.product.active) {
-          throw new NotFoundException(`La variante ${itemDto.variantId} no est disponible`);
+          throw new NotFoundException(`La variante ${itemDto.variantId} no está disponible`);
         }
 
         // Buscar y bloquear inventario
@@ -82,40 +136,100 @@ export class ReservationsService {
           throw new BadRequestException(`Stock insuficiente para la variante ${itemDto.variantId}. Disponible: ${available}`);
         }
 
-        // Actualizar Inventario
-        inventory.reserved += itemDto.quantity;
-        await queryRunner.manager.save(inventory);
+        const pricing = this.catalogPricingService.getEffectivePrice(variant.product);
+        const unitPriceNum = Number(pricing.finalPrice);
+        const subtotalNum = Number((unitPriceNum * itemDto.quantity).toFixed(2));
+        total += subtotalNum;
 
-        // Crear Item
-        const item = queryRunner.manager.create(ReservationItem, {
+        // Preparar ReservationItem
+        const resItem = queryRunner.manager.create(ReservationItem, {
           quantity: itemDto.quantity,
           reservationId: savedReservation.id,
           variantId: itemDto.variantId,
         });
-        await queryRunner.manager.save(item);
+        reservationItemsToSave.push(resItem);
 
-        // Registrar Movimiento
+        // Preparar SaleItem
+        const saleItem = queryRunner.manager.create(SaleItem, {
+          variantId: itemDto.variantId,
+          quantity: itemDto.quantity,
+          unitPrice: unitPriceNum,
+          subtotal: subtotalNum,
+          saleId: 0 // Se actualiza despues de guardar Sale
+        });
+        saleItemsToSave.push(saleItem);
+
+        // HOLD inventory independientemente de la opcion de pago
+        inventory.reserved += itemDto.quantity;
+        inventoriesToUpdate.push(inventory);
+        
         const movement = queryRunner.manager.create(InventoryMovement, {
           inventoryId: inventory.id,
           type: MovementType.RESERVA,
           quantity: itemDto.quantity,
           userId: user.sub,
-          notes: `Reserva #${savedReservation.id}`
+          notes: `Reserva #${savedReservation.id} (HOLD pasarela)`
         });
-        await queryRunner.manager.save(movement);
+        inventoryMovementsToSave.push(movement);
+      }
+
+      total = Number(total.toFixed(2));
+      const amountToPay = createReservationDto.paymentOption === 'DEPOSIT_30' ? Number((total * 0.3).toFixed(2)) : total;
+
+      const intentData = await this.paymentGatewayService.createPaymentIntent(amountToPay, {
+        reservationId: savedReservation.id
+      });
+
+      // Crear Sale
+      const sale = queryRunner.manager.create(Sale, {
+        channel: SaleChannel.WEB,
+        status: SaleStatus.PENDIENTE,
+        branchId: createReservationDto.branchId,
+        clientId: client.id,
+        reservationId: savedReservation.id,
+        subtotal: total,
+        total: total,
+        userId: user.sub,
+      });
+      const savedSale = await queryRunner.manager.save(Sale, sale);
+
+      // Guardar ReservationItems y SaleItems
+      for (const resItem of reservationItemsToSave) {
+        await queryRunner.manager.save(ReservationItem, resItem);
+      }
+      for (const si of saleItemsToSave) {
+        si.saleId = savedSale.id;
+        await queryRunner.manager.save(SaleItem, si);
+      }
+
+      // Crear Payment
+      const payment = queryRunner.manager.create(Payment, {
+        saleId: savedSale.id,
+        amount: amountToPay,
+        method: PaymentMethod.PASARELA,
+        status: PaymentStatus.PENDIENTE,
+        transactionReference: intentData.paymentIntentId,
+        stripePaymentIntentId: intentData.paymentIntentId
+      });
+      await queryRunner.manager.save(Payment, payment);
+
+      // Guardar Inventario
+      for (const inv of inventoriesToUpdate) {
+        await queryRunner.manager.save(Inventory, inv);
+      }
+      for (const mov of inventoryMovementsToSave) {
+        await queryRunner.manager.save(InventoryMovement, mov);
       }
 
       await queryRunner.commitTransaction();
 
-      // Disparar notificaciones despues del commit de forma asincrona y segura
-      const clientName = `${client.name} ${client.lastName}`;
-      this.notificationsService.notifyReservationCreated(
-        createReservationDto.branchId,
-        savedReservation,
-        clientName
-      ).catch(e => console.error('Failed to notify reservation', e));
-
-      return savedReservation;
+      return {
+        reservationId: savedReservation.id,
+        paymentId: payment.id,
+        clientSecret: intentData.clientSecret,
+        paymentIntentId: intentData.paymentIntentId,
+        amountToPay: amountToPay
+      };
     } catch (err) {
       await queryRunner.rollbackTransaction();
       throw err;
@@ -124,13 +238,234 @@ export class ReservationsService {
     }
   }
 
+  async confirmWebhook(paymentIntentId: string, status: 'SUCCESS' | 'FAIL', amount: number) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const payment = await queryRunner.manager.findOne(Payment, {
+        where: { transactionReference: paymentIntentId },
+        lock: { mode: 'pessimistic_write' },
+        relations: { sale: { reservation: { items: true, client: true } } }
+      });
+
+      if (!payment) {
+        throw new NotFoundException('Intento de pago no encontrado');
+      }
+
+      if (Number(payment.amount) !== amount) {
+        throw new BadRequestException('El monto pagado no coincide con el registrado');
+      }
+
+      if (payment.status !== PaymentStatus.PENDIENTE) {
+        // Idempotent: already processed
+        await queryRunner.rollbackTransaction();
+        return { message: 'Already processed' };
+      }
+
+      const sale = payment.sale;
+      const reservation = sale.reservation;
+
+      if (!sale || !reservation) {
+        throw new BadRequestException('El pago no esta asociado a una venta/reserva valida');
+      }
+
+      // Adicional pessimistic locks opcionales (pero payment lock suele ser suficiente ya que no hay concurrencia por otra via)
+      const lockedRes = await queryRunner.manager.findOne(Reservation, { where: { id: reservation.id }, lock: { mode: 'pessimistic_write' }});
+      const lockedSale = await queryRunner.manager.findOne(Sale, { where: { id: sale.id }, lock: { mode: 'pessimistic_write' }});
+
+      if (!lockedRes || !lockedSale) {
+        await queryRunner.rollbackTransaction();
+        return { message: 'Reservation or Sale not found' };
+      }
+
+      if (lockedRes.status !== ReservationStatus.PENDIENTE) {
+         await queryRunner.rollbackTransaction();
+         return { message: 'Reservation already processed' };
+      }
+
+      if (status === 'SUCCESS') {
+        payment.status = PaymentStatus.APROBADO;
+        reservation.status = ReservationStatus.CONFIRMADA;
+        
+        const isFull = Number(payment.amount) === Number(sale.total);
+        if (isFull) {
+          sale.status = SaleStatus.COMPLETADA;
+          
+          for (const item of reservation.items) {
+             const inventory = await queryRunner.manager.findOne(Inventory, {
+                where: { branchId: reservation.branchId, variantId: item.variantId },
+                lock: { mode: 'pessimistic_write' }
+             });
+             
+             // Convertir HOLD a VENTA
+             if (inventory) {
+               inventory.stock -= item.quantity;
+               inventory.reserved -= item.quantity;
+               await queryRunner.manager.save(inventory);
+               
+               const movement = queryRunner.manager.create(InventoryMovement, {
+                  inventoryId: inventory.id,
+                  type: MovementType.VENTA,
+                  quantity: item.quantity,
+                  userId: sale.userId,
+                  notes: `Venta por reserva #${reservation.id} (pago completo confirmado)`
+               });
+               await queryRunner.manager.save(movement);
+             }
+          }
+        } else {
+           // DEPOSIT_30
+           sale.status = SaleStatus.PENDIENTE;
+           // reserved was already incremented, so do nothing to inventory!
+        }
+        
+        await queryRunner.manager.save(payment);
+        await queryRunner.manager.save(sale);
+        await queryRunner.manager.save(reservation);
+        
+        await queryRunner.commitTransaction();
+
+        const clientName = `${reservation.client.name} ${reservation.client.lastName}`;
+        this.notificationsService.notifyReservationCreated(
+          reservation.branchId,
+          reservation,
+          clientName
+        ).catch(e => console.error(e));
+        
+        this.notificationsService.notifyReservationPaid(
+          reservation.branchId,
+          reservation,
+          clientName,
+          reservation.client.userId
+        ).catch(e => console.error(e));
+        
+      } else {
+        // FAIL
+        payment.status = PaymentStatus.RECHAZADO;
+        reservation.status = ReservationStatus.CANCELADA;
+        sale.status = SaleStatus.PENDIENTE;
+        
+        for (const item of reservation.items) {
+             const inventory = await queryRunner.manager.findOne(Inventory, {
+                where: { branchId: reservation.branchId, variantId: item.variantId },
+                lock: { mode: 'pessimistic_write' }
+             });
+             
+             if (inventory) {
+               inventory.reserved -= item.quantity;
+               await queryRunner.manager.save(inventory);
+               
+               const movement = queryRunner.manager.create(InventoryMovement, {
+                  inventoryId: inventory.id,
+                  type: MovementType.LIBERACION_RESERVA,
+                  quantity: item.quantity,
+                  userId: sale.userId,
+                  notes: `Pago fallido - Liberacion reserva #${reservation.id}`
+               });
+               await queryRunner.manager.save(movement);
+             }
+        }
+        
+        await queryRunner.manager.save(payment);
+        await queryRunner.manager.save(sale);
+        await queryRunner.manager.save(reservation);
+        
+        await queryRunner.commitTransaction();
+      }
+      return { success: true };
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async cancelAbandonedIntents() {
+    // 30 mins limit
+    const expirationTime = new Date(Date.now() - 30 * 60 * 1000);
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    
+    // Solo lectura de pendientes antiguos
+    const reservations = await queryRunner.manager.find(Reservation, {
+      where: {
+        status: ReservationStatus.PENDIENTE
+      }
+    });
+
+    const abandoned = reservations.filter(r => new Date(r.registrationDate) < expirationTime);
+
+    let cancelledCount = 0;
+    for (const res of abandoned) {
+       await queryRunner.startTransaction();
+       try {
+         const reservation = await queryRunner.manager.findOne(Reservation, {
+           where: { id: res.id },
+           lock: { mode: 'pessimistic_write' },
+           relations: { items: true, sale: { payments: true } }
+         });
+         
+         if (reservation && reservation.status === ReservationStatus.PENDIENTE) {
+           reservation.status = ReservationStatus.CANCELADA;
+           
+           if (reservation.sale) {
+             reservation.sale.status = SaleStatus.PENDIENTE; // o CANCELADA si existe el estado
+             await queryRunner.manager.save(reservation.sale);
+             
+             if (reservation.sale.payments?.length) {
+                for (const p of reservation.sale.payments) {
+                  if (p.status === PaymentStatus.PENDIENTE) {
+                    p.status = PaymentStatus.RECHAZADO;
+                    await queryRunner.manager.save(p);
+                  }
+                }
+             }
+           }
+           
+           for (const item of reservation.items) {
+             const inventory = await queryRunner.manager.findOne(Inventory, {
+                where: { branchId: reservation.branchId, variantId: item.variantId },
+                lock: { mode: 'pessimistic_write' }
+             });
+             if (inventory) {
+               inventory.reserved -= item.quantity;
+               await queryRunner.manager.save(inventory);
+               
+               const movement = queryRunner.manager.create(InventoryMovement, {
+                  inventoryId: inventory.id,
+                  type: MovementType.LIBERACION_RESERVA,
+                  quantity: item.quantity,
+                  userId: 1, // Admin o System user
+                  notes: `Reserva expirada #${reservation.id} - Liberacion`
+               });
+               await queryRunner.manager.save(movement);
+             }
+           }
+           await queryRunner.manager.save(reservation);
+           await queryRunner.commitTransaction();
+           cancelledCount++;
+         } else {
+           await queryRunner.rollbackTransaction();
+         }
+       } catch (err) {
+         await queryRunner.rollbackTransaction();
+       }
+    }
+    
+    await queryRunner.release();
+    return { cancelledCount };
+  }
+
   async findMyReservations(user: any) {
     if (!user.roles?.includes('CLIENTE')) {
       throw new ForbiddenException('Endpoint exclusivo para clientes');
     }
     const client = await this.getClientByUser(user);
 
-    return this.reservationRepository.find({
+    const reservations = await this.reservationRepository.find({
       where: { clientId: client.id },
       relations: {
         branch: true,
@@ -141,10 +476,14 @@ export class ReservationsService {
             size: true,
             color: true
           }
+        },
+        sale: {
+          payments: true
         }
       },
       order: { id: 'DESC' }
     });
+    return reservations.map(r => ({ ...r, paymentSummary: this.calculatePaymentSummary(r) }));
   }
 
   async findOneMyReservation(id: number, user: any) {
@@ -164,12 +503,15 @@ export class ReservationsService {
             size: true,
             color: true
           }
+        },
+        sale: {
+          payments: true
         }
       }
     });
 
     if (!reservation) throw new NotFoundException('Reserva no encontrada');
-    return reservation;
+    return { ...reservation, paymentSummary: this.calculatePaymentSummary(reservation) };
   }
 
   async findAll(user: any) {
@@ -187,7 +529,7 @@ export class ReservationsService {
       whereClause.branchId = user.branchId;
     }
 
-    return this.reservationRepository.find({
+    const reservations = await this.reservationRepository.find({
       where: whereClause,
       relations: {
         branch: true,
@@ -205,6 +547,7 @@ export class ReservationsService {
       },
       order: { id: 'DESC' }
     });
+    return reservations.map(r => ({ ...r, paymentSummary: this.calculatePaymentSummary(r) }));
   }
 
   async findOne(id: number, user: any) {
@@ -227,6 +570,9 @@ export class ReservationsService {
             size: true,
             color: true
           }
+        },
+        sale: {
+          payments: true
         }
       }
     });
@@ -237,7 +583,7 @@ export class ReservationsService {
       throw new UnauthorizedException('No tiene permisos para ver reservas de otras sucursales');
     }
 
-    return reservation;
+    return { ...reservation, paymentSummary: this.calculatePaymentSummary(reservation) };
   }
 
   async update(id: number, updateReservationDto: UpdateReservationDto, user: any) {
@@ -300,6 +646,13 @@ export class ReservationsService {
       saved.client.userId,
       updateReservationDto.status
     ).catch(e => console.error('Error notifying status update', e));
+
+    if (updateReservationDto.status === ReservationStatus.LISTA) {
+      this.appGateway.server.to(`branch_${saved.branchId}`).emit('reservation_ready', {
+        reservationId: saved.id,
+        message: 'Nueva reserva lista para entregar/cobrar'
+      });
+    }
 
     return saved;
   }
@@ -398,157 +751,7 @@ export class ReservationsService {
     throw new BadRequestException('No se puede eliminar fsicamente una reserva. Use status = CANCELADA');
   }
 
-  async pay(id: number, paymentOption: 'DEPOSIT_30' | 'FULL', user: any) {
-    if (!user.roles?.includes('CLIENTE')) {
-      throw new ForbiddenException('Endpoint exclusivo para clientes');
-    }
-    const client = await this.getClientByUser(user);
 
-    if (paymentOption !== 'DEPOSIT_30' && paymentOption !== 'FULL') {
-      throw new BadRequestException('Opción de pago inválida');
-    }
-
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      const reservation = await queryRunner.manager.findOne(Reservation, {
-        where: { id, clientId: client.id },
-        lock: { mode: 'pessimistic_write' },
-        relations: { items: { variant: { product: true } } }
-      });
-
-      if (!reservation) {
-        throw new NotFoundException('Reserva no encontrada');
-      }
-
-      if (reservation.status !== ReservationStatus.PENDIENTE) {
-        throw new BadRequestException('La reserva debe estar en estado PENDIENTE para ser pagada');
-      }
-
-      const existingSale = await queryRunner.manager.findOne(Sale, {
-        where: { reservationId: id }
-      });
-      if (existingSale) {
-        throw new ConflictException('La reserva ya ha sido pagada o tiene una venta asociada');
-      }
-
-      let total = 0;
-      const saleItemsToSave = [];
-      const inventoriesToUpdate = [];
-      const inventoryMovementsToSave = [];
-
-      for (const item of reservation.items) {
-        const inventory = await queryRunner.manager.findOne(Inventory, {
-          where: { branchId: reservation.branchId, variantId: item.variantId },
-          lock: { mode: 'pessimistic_write' }
-        });
-
-        if (!inventory) {
-          throw new NotFoundException(`Inventario no encontrado para la variante ${item.variantId}`);
-        }
-
-        if (!item.variant.active || !item.variant.product.active) {
-          throw new BadRequestException(`El producto o variante ${item.variantId} está inactivo`);
-        }
-
-        if (inventory.stock < item.quantity) {
-          throw new ConflictException(`Stock insuficiente para la variante ${item.variantId}`);
-        }
-
-        if (inventory.reserved < item.quantity) {
-          throw new ConflictException(`Cantidad reservada inconsistente para la variante ${item.variantId}`);
-        }
-
-        const unitPriceNum = Number(item.variant.product.price);
-        const subtotalNum = Number((unitPriceNum * item.quantity).toFixed(2));
-        total += subtotalNum;
-
-        const saleItem = queryRunner.manager.create(SaleItem, {
-          variantId: item.variantId,
-          quantity: item.quantity,
-          unitPrice: unitPriceNum,
-          subtotal: subtotalNum,
-          saleId: 0
-        });
-        saleItemsToSave.push(saleItem);
-
-        if (paymentOption === 'FULL') {
-          inventory.stock -= item.quantity;
-          inventory.reserved -= item.quantity;
-          inventoriesToUpdate.push(inventory);
-
-          const movement = queryRunner.manager.create(InventoryMovement, {
-            inventoryId: inventory.id,
-            type: MovementType.VENTA,
-            quantity: item.quantity,
-            userId: user.sub,
-            notes: `Venta por reserva #${reservation.id}`
-          });
-          inventoryMovementsToSave.push(movement);
-        }
-      }
-
-      total = Number(total.toFixed(2));
-      const amountToPay = paymentOption === 'DEPOSIT_30' ? Number((total * 0.3).toFixed(2)) : total;
-
-      const sale = queryRunner.manager.create(Sale, {
-        channel: SaleChannel.WEB,
-        status: paymentOption === 'FULL' ? SaleStatus.COMPLETADA : SaleStatus.PENDIENTE,
-        branchId: reservation.branchId,
-        clientId: client.id,
-        reservationId: reservation.id,
-        subtotal: total,
-        total: total,
-        userId: user.sub,
-      });
-
-      const savedSale = await queryRunner.manager.save(Sale, sale);
-
-      for (const si of saleItemsToSave) {
-        si.saleId = savedSale.id;
-        await queryRunner.manager.save(SaleItem, si);
-      }
-
-      const payment = queryRunner.manager.create(Payment, {
-        saleId: savedSale.id,
-        amount: amountToPay,
-        method: PaymentMethod.PASARELA,
-        status: PaymentStatus.APROBADO
-      });
-      await queryRunner.manager.save(Payment, payment);
-
-      for (const inv of inventoriesToUpdate) {
-        await queryRunner.manager.save(Inventory, inv);
-      }
-
-      for (const mov of inventoryMovementsToSave) {
-        await queryRunner.manager.save(InventoryMovement, mov);
-      }
-
-      reservation.status = ReservationStatus.CONFIRMADA;
-      await queryRunner.manager.save(Reservation, reservation);
-
-      await queryRunner.commitTransaction();
-
-      // Notifications logic
-      const clientName = `${client.name} ${client.lastName}`;
-      this.notificationsService.notifyReservationPaid(
-        reservation.branchId,
-        reservation,
-        clientName,
-        client.userId
-      ).catch(e => console.error('Failed to notify reservation paid', e));
-
-      return { success: true, message: 'Pago exitoso', reservation };
-    } catch (err) {
-      await queryRunner.rollbackTransaction();
-      throw err;
-    } finally {
-      await queryRunner.release();
-    }
-  }
 
   async deliver(id: number, user: any) {
     if (!user.roles?.includes('CAJERO')) {
@@ -653,13 +856,18 @@ export class ReservationsService {
 
       let remainingAmount = 0;
       let existingSale = reservation.sale;
+      let isPartialPayment = false;
 
       if (existingSale) {
-        const paidAmount = existingSale.payments?.filter(p => p.status === PaymentStatus.APROBADO).reduce((sum, p) => sum + Number(p.amount), 0) || 0;
-        remainingAmount = Number((Number(existingSale.total) - paidAmount).toFixed(2));
+        const summary = this.calculatePaymentSummary(reservation);
         
-        if (remainingAmount <= 0 || existingSale.status === SaleStatus.COMPLETADA) {
+        if (summary.paymentState === 'PAGADO') {
           throw new ConflictException('La reserva ya está totalmente pagada, use el botón de Validar Entrega');
+        }
+        
+        if (summary.paymentState === 'PARCIAL') {
+          isPartialPayment = true;
+          remainingAmount = summary.remainingAmount;
         }
       }
 

@@ -5,14 +5,20 @@ import {
   CreateVariantDto, UpdateVariantDto,
   CreateCategoryDto, UpdateCategoryDto,
   CreateSizeDto, UpdateSizeDto,
-  CreateColorDto, UpdateColorDto
+  CreateColorDto, UpdateColorDto,
+  CreateSeasonDto, UpdateSeasonDto,
+  CreateCollectionDto, UpdateCollectionDto,
+  CreatePromotionDto, UpdatePromotionDto
 } from './catalog.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { UploadedFile, UseInterceptors, UseGuards } from '@nestjs/common';
 
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
+
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RolesGuard)
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
 
@@ -88,4 +94,64 @@ export class CatalogController {
   updateColor(@Param('id') id: string, @Body() updateColorDto: UpdateColorDto) { return this.catalogService.updateColor(+id, updateColorDto); }
   @Delete('colors/:id')
   removeColor(@Param('id') id: string) { return this.catalogService.removeColor(+id); }
+
+  @Post('seasons')
+  @Roles('ADMIN')
+  createSeason(@Body() createSeasonDto: CreateSeasonDto) { return this.catalogService.createSeason(createSeasonDto); }
+  
+  @Get('seasons')
+  @Roles('ADMIN', 'ENCARGADO')
+  findAllSeasons() { return this.catalogService.findAllSeasons(); }
+  
+  @Get('seasons/:id')
+  @Roles('ADMIN', 'ENCARGADO')
+  findOneSeason(@Param('id') id: string) { return this.catalogService.findOneSeason(+id); }
+  
+  @Patch('seasons/:id')
+  @Roles('ADMIN')
+  updateSeason(@Param('id') id: string, @Body() updateSeasonDto: UpdateSeasonDto) { return this.catalogService.updateSeason(+id, updateSeasonDto); }
+  
+  @Delete('seasons/:id')
+  @Roles('ADMIN')
+  removeSeason(@Param('id') id: string) { return this.catalogService.removeSeason(+id); }
+
+  @Post('collections')
+  @Roles('ADMIN')
+  createCollection(@Body() createCollectionDto: CreateCollectionDto) { return this.catalogService.createCollection(createCollectionDto); }
+  
+  @Get('collections')
+  @Roles('ADMIN', 'ENCARGADO')
+  findAllCollections() { return this.catalogService.findAllCollections(); }
+  
+  @Get('collections/:id')
+  @Roles('ADMIN', 'ENCARGADO')
+  findOneCollection(@Param('id') id: string) { return this.catalogService.findOneCollection(+id); }
+  
+  @Patch('collections/:id')
+  @Roles('ADMIN')
+  updateCollection(@Param('id') id: string, @Body() updateCollectionDto: UpdateCollectionDto) { return this.catalogService.updateCollection(+id, updateCollectionDto); }
+  
+  @Delete('collections/:id')
+  @Roles('ADMIN')
+  removeCollection(@Param('id') id: string) { return this.catalogService.removeCollection(+id); }
+
+  @Post('promotions')
+  @Roles('ADMIN')
+  createPromotion(@Body() createPromotionDto: CreatePromotionDto) { return this.catalogService.createPromotion(createPromotionDto); }
+  
+  @Get('promotions')
+  @Roles('ADMIN', 'ENCARGADO')
+  findAllPromotions() { return this.catalogService.findAllPromotions(); }
+  
+  @Get('promotions/:id')
+  @Roles('ADMIN', 'ENCARGADO')
+  findOnePromotion(@Param('id') id: string) { return this.catalogService.findOnePromotion(+id); }
+  
+  @Patch('promotions/:id')
+  @Roles('ADMIN')
+  updatePromotion(@Param('id') id: string, @Body() updatePromotionDto: UpdatePromotionDto) { return this.catalogService.updatePromotion(+id, updatePromotionDto); }
+  
+  @Delete('promotions/:id')
+  @Roles('ADMIN')
+  removePromotion(@Param('id') id: string) { return this.catalogService.removePromotion(+id); }
 }

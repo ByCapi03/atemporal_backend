@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Product } from '../catalog/product.entity';
 import { Variant } from '../catalog/variant.entity';
 import { Inventory } from '../inventory/inventory.entity';
+import { CatalogPricingService } from '../catalog/catalog-pricing.service';
 
 @Injectable()
 export class StoreService {
@@ -12,6 +13,7 @@ export class StoreService {
     @InjectRepository(Product) private productRepository: Repository<Product>,
     @InjectRepository(Variant) private variantRepository: Repository<Variant>,
     @InjectRepository(Inventory) private inventoryRepository: Repository<Inventory>,
+    private readonly catalogPricingService: CatalogPricingService,
   ) {}
 
   async getPublicProducts() {
@@ -22,20 +24,27 @@ export class StoreService {
         category: { active: true },
         variants: { active: true }
       },
-      relations: { category: true, variants: true }
+      relations: { category: true, variants: true, collection: { season: true }, promotions: true }
     });
 
-    return products.map(p => ({
-      id: p.id,
-      name: p.name,
-      price: p.price,
-      categoryId: p.categoryId,
-      categoryName: p.category.name,
-      imageUrl: p.imageUrl,
-      arEnabled: p.arEnabled,
-      arImageUrl: p.arImageUrl ?? p.imageUrl,
-      arType: p.arType
-    }));
+    return products.map(p => {
+      const pricing = this.catalogPricingService.getEffectivePrice(p);
+      return {
+        id: p.id,
+        name: p.name,
+        price: pricing.basePrice,
+        finalPrice: pricing.finalPrice,
+        discount: pricing.discount,
+        seasonName: p.collection?.season?.name,
+        collectionName: p.collection?.name,
+        categoryId: p.categoryId,
+        categoryName: p.category.name,
+        imageUrl: p.imageUrl,
+        arEnabled: p.arEnabled,
+        arImageUrl: p.arImageUrl ?? p.imageUrl,
+        arType: p.arType
+      };
+    });
   }
 
   async getPublicProductDetail(id: number) {
@@ -45,10 +54,12 @@ export class StoreService {
         active: true,
         category: { active: true }
       },
-      relations: { category: true, variants: { size: true, color: true } }
+      relations: { category: true, variants: { size: true, color: true }, collection: { season: true }, promotions: true }
     });
 
     if (!product) throw new NotFoundException('Producto no encontrado o no disponible');
+
+    const pricing = this.catalogPricingService.getEffectivePrice(product);
 
     // Filtrar solo variantes activas
     const activeVariants = product.variants.filter(v => v.active);
@@ -56,7 +67,11 @@ export class StoreService {
     return {
       id: product.id,
       name: product.name,
-      price: product.price,
+      price: pricing.basePrice,
+      finalPrice: pricing.finalPrice,
+      discount: pricing.discount,
+      seasonName: product.collection?.season?.name,
+      collectionName: product.collection?.name,
       categoryName: product.category.name,
       imageUrl: product.imageUrl,
       arEnabled: product.arEnabled,
