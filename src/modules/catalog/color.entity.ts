@@ -9,6 +9,9 @@ export class Color {
   @Column({ unique: true })
   name: string;
 
+  @Column({ nullable: true })
+  hexCode: string;
+
   @Column({ default: true })
   active: boolean;
 

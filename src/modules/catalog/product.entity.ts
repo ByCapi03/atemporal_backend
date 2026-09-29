@@ -37,6 +37,12 @@ export class Product {
   imagePublicId: string;
 
   @Column({ default: false })
+  colorizable: boolean;
+
+  @Column({ nullable: true })
+  sourceColor: string;
+
+  @Column({ default: false })
   arEnabled: boolean;
 
   @Column({ nullable: true })

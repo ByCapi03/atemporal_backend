@@ -34,12 +34,19 @@ export class CreateReservationDto {
   @Type(() => ReservationItemDto)
   items: ReservationItemDto[];
 
-  @IsString()
-  @IsEnum(['DEPOSIT_30', 'FULL'])
-  paymentOption: 'DEPOSIT_30' | 'FULL';
 }
 
 export class UpdateReservationDto {
   @IsEnum(ReservationStatus)
   status: ReservationStatus;
+}
+
+export class CreatePaymentDto {
+  @IsString()
+  @IsEnum(['DEPOSIT_30', 'FULL'])
+  paymentOption: 'DEPOSIT_30' | 'FULL';
+
+  @IsString()
+  @IsEnum(['web', 'mobile'])
+  clientPlatform: 'web' | 'mobile';
 }

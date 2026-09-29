@@ -47,4 +47,19 @@ export class CloudinaryService {
       console.error(`Error deleting image ${publicId} from Cloudinary:`, err);
     }
   }
+
+  getColorizedImageUrl(imagePublicId: string, sourceColor: string, targetHex: string): string {
+    if (!imagePublicId) return '';
+    if (!sourceColor || !targetHex) {
+      return cloudinary.url(imagePublicId, { secure: true });
+    }
+
+    const target = targetHex.replace('#', '');
+    const source = sourceColor.replace('#', '');
+
+    return cloudinary.url(imagePublicId, {
+      secure: true,
+      effect: `replace_color:${target}:30:${source}`,
+    });
+  }
 }

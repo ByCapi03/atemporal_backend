@@ -6,6 +6,7 @@ import { Product } from '../catalog/product.entity';
 import { Variant } from '../catalog/variant.entity';
 import { Inventory } from '../inventory/inventory.entity';
 import { CatalogPricingService } from '../catalog/catalog-pricing.service';
+import { CloudinaryService } from '../../common/cloudinary.service';
 
 @Injectable()
 export class StoreService {
@@ -14,6 +15,7 @@ export class StoreService {
     @InjectRepository(Variant) private variantRepository: Repository<Variant>,
     @InjectRepository(Inventory) private inventoryRepository: Repository<Inventory>,
     private readonly catalogPricingService: CatalogPricingService,
+    private readonly cloudinaryService: CloudinaryService,
   ) {}
 
   async getPublicProducts() {
@@ -77,14 +79,31 @@ export class StoreService {
       arEnabled: product.arEnabled,
       arImageUrl: product.arImageUrl ?? product.imageUrl,
       arType: product.arType,
-      variants: activeVariants.map(v => ({
-        id: v.id,
-        sku: v.sku,
-        sizeId: v.sizeId,
-        sizeName: v.size.name,
-        colorId: v.colorId,
-        colorName: v.color.name
-      }))
+      variants: activeVariants.map(v => {
+        let previewImageUrl = product.imageUrl;
+        let previewArImageUrl = product.arImageUrl ?? product.imageUrl;
+
+        if (product.colorizable && product.sourceColor && v.color.hexCode) {
+          if (product.imagePublicId) {
+            previewImageUrl = this.cloudinaryService.getColorizedImageUrl(product.imagePublicId, product.sourceColor, v.color.hexCode);
+          }
+          if (product.arImagePublicId) {
+            previewArImageUrl = this.cloudinaryService.getColorizedImageUrl(product.arImagePublicId, product.sourceColor, v.color.hexCode);
+          }
+        }
+
+        return {
+          id: v.id,
+          sku: v.sku,
+          sizeId: v.sizeId,
+          sizeName: v.size.name,
+          colorId: v.colorId,
+          colorName: v.color.name,
+          colorHexCode: v.color.hexCode,
+          previewImageUrl,
+          previewArImageUrl
+        };
+      })
     };
   }
 
@@ -129,17 +148,30 @@ export class StoreService {
 
     const product = variant.product;
 
+    let previewImageUrl = product.imageUrl;
+    let previewArImageUrl = product.arImageUrl ?? product.imageUrl;
+
+    if (product.colorizable && product.sourceColor && variant.color.hexCode) {
+      if (product.imagePublicId) {
+        previewImageUrl = this.cloudinaryService.getColorizedImageUrl(product.imagePublicId, product.sourceColor, variant.color.hexCode);
+      }
+      if (product.arImagePublicId) {
+        previewArImageUrl = this.cloudinaryService.getColorizedImageUrl(product.arImagePublicId, product.sourceColor, variant.color.hexCode);
+      }
+    }
+
     return {
       variantId: variant.id,
       sku: variant.sku,
       size: variant.size.name,
       color: variant.color.name,
+      colorHexCode: variant.color.hexCode,
       product: {
         id: product.id,
         name: product.name,
-        imageUrl: product.imageUrl,
+        imageUrl: previewImageUrl,
         arEnabled: product.arEnabled,
-        arImageUrl: product.arImageUrl ?? product.imageUrl,
+        arImageUrl: previewArImageUrl,
         arType: product.arType
       }
     };

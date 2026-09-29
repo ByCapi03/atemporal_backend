@@ -32,6 +32,10 @@ export class CreateColorDto {
   @IsBoolean()
   @IsOptional()
   active?: boolean;
+
+  @IsString()
+  @IsOptional()
+  hexCode?: string;
 }
 export class UpdateColorDto extends PartialType(CreateColorDto) {}
 
@@ -63,6 +67,14 @@ export class CreateProductDto {
   @IsNumber()
   @IsOptional()
   collectionId?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  colorizable?: boolean;
+
+  @IsString()
+  @IsOptional()
+  sourceColor?: string;
 }
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
 

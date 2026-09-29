@@ -19,7 +19,7 @@ export class DashboardService {
     @InjectRepository(User) private readonly userRepository: Repository<User>,
   ) {}
 
-  async getMetrics(user: any) {
+  async getMetrics(user: any, query: any = {}) {
     const isCajeroOnly = user.roles.includes('CAJERO') && !user.roles.includes('ADMIN') && !user.roles.includes('ENCARGADO');
     if (isCajeroOnly) {
       throw new ForbiddenException('Acceso denegado');
@@ -36,22 +36,31 @@ export class DashboardService {
       ReservationStatus.LISTA,
     ];
 
-    // Today Date range
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const endOfToday = new Date();
     endOfToday.setHours(23, 59, 59, 999);
 
-    // 1. Sales Today
+    const startDate = query.startDate ? new Date(query.startDate) : startOfToday;
+    const endDate = query.endDate ? new Date(query.endDate) : endOfToday;
+    if (query.endDate) endDate.setHours(23, 59, 59, 999);
+
+    const targetBranchId = isAdmin && query.branchId ? Number(query.branchId) : branchId;
+    const targetChannel = query.channel;
+
+    // 1. Sales Today (Or Date Range)
     const todayQb = this.saleRepository.createQueryBuilder('sale')
       .select('SUM(sale.total)', 'totalAmount')
       .addSelect('COUNT(sale.id)', 'salesCount')
       .where('sale.status IN (:...statuses)', { statuses: effectiveStatuses })
-      .andWhere('sale.date >= :start', { start: startOfToday })
-      .andWhere('sale.date <= :end', { end: endOfToday });
+      .andWhere('sale.date >= :start', { start: startDate })
+      .andWhere('sale.date <= :end', { end: endDate });
 
-    if (!isAdmin && branchId) {
-      todayQb.andWhere('sale.branchId = :branchId', { branchId });
+    if (targetBranchId) {
+      todayQb.andWhere('sale.branchId = :branchId', { branchId: targetBranchId });
+    }
+    if (targetChannel) {
+      todayQb.andWhere('sale.channel = :channel', { channel: targetChannel });
     }
 
     const todayRaw = await todayQb.getRawOne();
@@ -62,8 +71,8 @@ export class DashboardService {
     const resQb = this.reservationRepository.createQueryBuilder('res')
       .where('res.status IN (:...statuses)', { statuses: activeResStatuses });
 
-    if (!isAdmin && branchId) {
-      resQb.andWhere('res.branchId = :branchId', { branchId });
+    if (targetBranchId) {
+      resQb.andWhere('res.branchId = :branchId', { branchId: targetBranchId });
     }
 
     const activeReservationsRaw = await resQb.getMany();
@@ -88,8 +97,8 @@ export class DashboardService {
       .andWhere('userRole.active = :urActive', { urActive: true })
       .andWhere('user.active = :active', { active: true });
       
-    if (!isAdmin && branchId) {
-      usersQb.andWhere('user.branchId = :branchId', { branchId });
+    if (targetBranchId) {
+      usersQb.andWhere('user.branchId = :branchId', { branchId: targetBranchId });
     }
     
     activeCashiers = await usersQb.getCount();
@@ -98,8 +107,8 @@ export class DashboardService {
     const invQb = this.inventoryRepository.createQueryBuilder('inv')
       .where('(inv.stock - inv.reserved) <= inv.stockMin');
 
-    if (!isAdmin && branchId) {
-      invQb.andWhere('inv.branchId = :branchId', { branchId });
+    if (targetBranchId) {
+      invQb.andWhere('inv.branchId = :branchId', { branchId: targetBranchId });
     }
 
     const lowStockCount = await invQb.getCount();
@@ -118,8 +127,8 @@ export class DashboardService {
       .groupBy("TO_CHAR(sale.date, 'YYYY-MM-DD')")
       .orderBy("TO_CHAR(sale.date, 'YYYY-MM-DD')", 'ASC');
 
-    if (!isAdmin && branchId) {
-      last7Qb.andWhere('sale.branchId = :branchId', { branchId });
+    if (targetBranchId) {
+      last7Qb.andWhere('sale.branchId = :branchId', { branchId: targetBranchId });
     }
 
     const last7Raw = await last7Qb.getRawMany();
@@ -145,8 +154,8 @@ export class DashboardService {
       .where('sale.status IN (:...statuses)', { statuses: effectiveStatuses })
       .groupBy('sale.channel');
 
-    if (!isAdmin && branchId) {
-      channelQb.andWhere('sale.branchId = :branchId', { branchId });
+    if (targetBranchId) {
+      channelQb.andWhere('sale.branchId = :branchId', { branchId: targetBranchId });
     }
 
     const channelRaw = await channelQb.getRawMany();
@@ -180,8 +189,8 @@ export class DashboardService {
       .orderBy('SUM(item.quantity)', 'DESC')
       .limit(5);
 
-    if (!isAdmin && branchId) {
-      topProdQb.andWhere('sale.branchId = :branchId', { branchId });
+    if (targetBranchId) {
+      topProdQb.andWhere('sale.branchId = :branchId', { branchId: targetBranchId });
     }
 
     const topProdRaw = await topProdQb.getRawMany();
@@ -204,8 +213,14 @@ export class DashboardService {
         .addSelect('SUM(sale.total)', 'totalAmount')
         .addSelect('COUNT(sale.id)', 'salesCount')
         .where('sale.status IN (:...statuses)', { statuses: effectiveStatuses })
+        .andWhere('sale.date >= :start', { start: startDate })
+        .andWhere('sale.date <= :end', { end: endDate })
         .groupBy('branch.id')
         .addGroupBy('branch.name');
+
+      if (targetChannel) {
+        branchQb.andWhere('sale.channel = :channel', { channel: targetChannel });
+      }
 
       const branchRaw = await branchQb.getRawMany();
       salesByBranch = branchRaw.map((row) => ({
@@ -215,6 +230,61 @@ export class DashboardService {
         salesCount: Number(row.salesCount || 0),
       }));
     }
+
+    // 8. Sales By Season and Collection
+    const seasonQb = this.saleItemRepository.createQueryBuilder('item')
+      .innerJoin('item.sale', 'sale')
+      .innerJoin('item.variant', 'variant')
+      .innerJoin('variant.product', 'product')
+      .leftJoin('product.season', 'season')
+      .select('season.name', 'seasonName')
+      .addSelect('SUM(item.subtotal)', 'revenue')
+      .where('sale.status IN (:...statuses)', { statuses: effectiveStatuses })
+      .andWhere('season.id IS NOT NULL')
+      .andWhere('sale.date >= :start', { start: startDate })
+      .andWhere('sale.date <= :end', { end: endDate })
+      .groupBy('season.id')
+      .addGroupBy('season.name');
+
+    if (targetBranchId) {
+      seasonQb.andWhere('sale.branchId = :branchId', { branchId: targetBranchId });
+    }
+    if (targetChannel) {
+      seasonQb.andWhere('sale.channel = :channel', { channel: targetChannel });
+    }
+
+    const seasonRaw = await seasonQb.getRawMany();
+    const salesBySeason = seasonRaw.map(row => ({
+      seasonName: row.seasonName,
+      revenue: Number(row.revenue || 0)
+    }));
+
+    const collectionQb = this.saleItemRepository.createQueryBuilder('item')
+      .innerJoin('item.sale', 'sale')
+      .innerJoin('item.variant', 'variant')
+      .innerJoin('variant.product', 'product')
+      .leftJoin('product.collection', 'collection')
+      .select('collection.name', 'collectionName')
+      .addSelect('SUM(item.subtotal)', 'revenue')
+      .where('sale.status IN (:...statuses)', { statuses: effectiveStatuses })
+      .andWhere('collection.id IS NOT NULL')
+      .andWhere('sale.date >= :start', { start: startDate })
+      .andWhere('sale.date <= :end', { end: endDate })
+      .groupBy('collection.id')
+      .addGroupBy('collection.name');
+
+    if (targetBranchId) {
+      collectionQb.andWhere('sale.branchId = :branchId', { branchId: targetBranchId });
+    }
+    if (targetChannel) {
+      collectionQb.andWhere('sale.channel = :channel', { channel: targetChannel });
+    }
+
+    const collectionRaw = await collectionQb.getRawMany();
+    const salesByCollection = collectionRaw.map(row => ({
+      collectionName: row.collectionName,
+      revenue: Number(row.revenue || 0)
+    }));
 
     return {
       salesTodayAmount,
@@ -228,6 +298,8 @@ export class DashboardService {
       salesLast7Days,
       salesByChannel,
       topProducts,
+      salesBySeason,
+      salesByCollection,
       ...(isAdmin ? { salesByBranch } : {}),
     };
   }

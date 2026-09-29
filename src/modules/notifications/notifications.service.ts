@@ -150,8 +150,8 @@ export class NotificationsService {
   async notifyReservationPaid(branchId: number, reservation: any, clientName: string, clientUserId: number) {
     try {
       // 1. Notify Client
-      const clientTitle = `Pago confirmado #${reservation.id}`;
-      const clientMessage = `Tu pago ha sido confirmado. La reserva ya se encuentra pagada.`;
+      const clientTitle = `Pago confirmado para tu reserva #${reservation.id}`;
+      const clientMessage = `Pago confirmado para tu reserva #${reservation.id}`;
 
       const clientNotification = this.notificationRepo.create({
         userId: clientUserId,
@@ -181,8 +181,8 @@ export class NotificationsService {
       );
 
       if (targetUsers.length > 0) {
-        const title = `Reserva pagada #${reservation.id}`;
-        const message = `La reserva de ${clientName} ha sido pagada y debe ser preparada.`;
+        const title = `Nueva reserva confirmada #${reservation.id}`;
+        const message = `Nueva reserva confirmada #${reservation.id}`;
 
         const newNotifications = targetUsers.map(user => 
           this.notificationRepo.create({
@@ -248,8 +248,8 @@ export class NotificationsService {
       );
 
       if (targetUsers.length > 0) {
-        const title = `Reserva entregada #${reservation.id}`;
-        const message = `La reserva #${reservation.id} fue entregada por ${cashierName}.`;
+        const title = `Reserva #${reservation.id} atendida`;
+        const message = `Reserva #${reservation.id} atendida`;
 
         const newNotifications = targetUsers.map(user => 
           this.notificationRepo.create({
@@ -283,8 +283,16 @@ export class NotificationsService {
 
   async notifyReservationStatusUpdated(branchId: number, reservation: any, clientUserId: number, newStatus: string) {
     try {
-      const clientTitle = `Estado de reserva #${reservation.id}`;
-      const clientMessage = `Tu reserva ha cambiado a estado: ${newStatus}.`;
+      let clientTitle = `Estado de reserva #${reservation.id}`;
+      let clientMessage = `Tu reserva ha cambiado a estado: ${newStatus}.`;
+
+      if (newStatus === 'PREPARANDO') {
+        clientTitle = `Preparando reserva #${reservation.id}`;
+        clientMessage = `Estamos preparando tu reserva #${reservation.id}`;
+      } else if (newStatus === 'LISTA') {
+        clientTitle = `Reserva lista #${reservation.id}`;
+        clientMessage = `Tu reserva #${reservation.id} está lista para recoger`;
+      }
 
       const clientNotification = this.notificationRepo.create({
         userId: clientUserId,
@@ -316,8 +324,8 @@ export class NotificationsService {
 
         if (targetUsers.length > 0) {
           const clientName = reservation.client ? `${reservation.client.name} ${reservation.client.lastName}` : 'Cliente';
-          const cajeroTitle = `Reserva Lista #${reservation.id}`;
-          const cajeroMessage = `La reserva de ${clientName} está lista para ser cobrada/entregada.`;
+          const cajeroTitle = `Reserva #${reservation.id} lista para entrega`;
+          const cajeroMessage = `Reserva #${reservation.id} lista para entrega`;
 
           const cajeroNotifications = targetUsers.map(u => 
             this.notificationRepo.create({

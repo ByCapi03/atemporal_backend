@@ -88,7 +88,7 @@ export class ReservationsService {
     };
   }
 
-  async createIntent(createReservationDto: CreateReservationDto, user: any) {
+  async create(createReservationDto: CreateReservationDto, user: any) {
     const client = await this.getClientByUser(user);
 
     const queryRunner = this.dataSource.createQueryRunner();
@@ -174,11 +174,6 @@ export class ReservationsService {
       }
 
       total = Number(total.toFixed(2));
-      const amountToPay = createReservationDto.paymentOption === 'DEPOSIT_30' ? Number((total * 0.3).toFixed(2)) : total;
-
-      const intentData = await this.paymentGatewayService.createPaymentIntent(amountToPay, {
-        reservationId: savedReservation.id
-      });
 
       // Crear Sale
       const sale = queryRunner.manager.create(Sale, {
@@ -202,17 +197,6 @@ export class ReservationsService {
         await queryRunner.manager.save(SaleItem, si);
       }
 
-      // Crear Payment
-      const payment = queryRunner.manager.create(Payment, {
-        saleId: savedSale.id,
-        amount: amountToPay,
-        method: PaymentMethod.PASARELA,
-        status: PaymentStatus.PENDIENTE,
-        transactionReference: intentData.paymentIntentId,
-        stripePaymentIntentId: intentData.paymentIntentId
-      });
-      await queryRunner.manager.save(Payment, payment);
-
       // Guardar Inventario
       for (const inv of inventoriesToUpdate) {
         await queryRunner.manager.save(Inventory, inv);
@@ -225,10 +209,8 @@ export class ReservationsService {
 
       return {
         reservationId: savedReservation.id,
-        paymentId: payment.id,
-        clientSecret: intentData.clientSecret,
-        paymentIntentId: intentData.paymentIntentId,
-        amountToPay: amountToPay
+        saleId: savedSale.id,
+        total: total
       };
     } catch (err) {
       await queryRunner.rollbackTransaction();
@@ -238,7 +220,70 @@ export class ReservationsService {
     }
   }
 
-  async confirmWebhook(paymentIntentId: string, status: 'SUCCESS' | 'FAIL', amount: number) {
+  async createPayment(id: number, paymentOption: 'DEPOSIT_30' | 'FULL', clientPlatform: 'web' | 'mobile', user: any) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const reservation = await queryRunner.manager.findOne(Reservation, {
+        where: { id, clientId: user.sub },
+        relations: { sale: true },
+        lock: { mode: 'pessimistic_write' }
+      });
+
+      if (!reservation) {
+        throw new NotFoundException('Reserva no encontrada o no autorizada');
+      }
+      if (reservation.status !== ReservationStatus.PENDIENTE) {
+        throw new BadRequestException('La reserva no esta en estado PENDIENTE');
+      }
+      if (!reservation.sale) {
+        throw new BadRequestException('La reserva no tiene una venta asociada');
+      }
+
+      const total = Number(reservation.sale.total);
+      const amountToPay = paymentOption === 'DEPOSIT_30' ? Number((total * 0.3).toFixed(2)) : total;
+
+      const metadata = {
+        reservationId: reservation.id.toString(),
+        saleId: reservation.sale.id.toString(),
+        paymentOption: paymentOption
+      };
+
+      let stripeResponse;
+      if (clientPlatform === 'web') {
+        stripeResponse = await this.paymentGatewayService.createCheckoutSession(amountToPay, metadata);
+      } else {
+        stripeResponse = await this.paymentGatewayService.createPaymentIntent(amountToPay, metadata);
+      }
+
+      const payment = queryRunner.manager.create(Payment, {
+        saleId: reservation.sale.id,
+        amount: amountToPay,
+        method: PaymentMethod.PASARELA,
+        status: PaymentStatus.PENDIENTE,
+        transactionReference: stripeResponse.stripeId,
+        stripePaymentIntentId: stripeResponse.stripeId
+      });
+      await queryRunner.manager.save(Payment, payment);
+
+      await queryRunner.commitTransaction();
+
+      return {
+        paymentId: payment.id,
+        ...stripeResponse
+      };
+
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async confirmStripePayment(paymentIntentId: string, status: 'SUCCESS' | 'FAIL', amount: number) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -648,13 +693,21 @@ export class ReservationsService {
     ).catch(e => console.error('Error notifying status update', e));
 
     if (updateReservationDto.status === ReservationStatus.LISTA) {
-      this.appGateway.server.to(`branch_${saved.branchId}`).emit('reservation_ready', {
+      this.appGateway.server.to(`branch:${saved.branchId}`).emit('reservation.ready', {
         reservationId: saved.id,
         message: 'Nueva reserva lista para entregar/cobrar'
       });
     }
 
     return saved;
+  }
+
+  async cancelMyReservation(id: number, user: any) {
+    const reservation = await this.findOneMyReservation(id, user);
+    if (reservation.status === ReservationStatus.CANCELADA || reservation.status === ReservationStatus.ATENDIDA) {
+      throw new BadRequestException('No se puede cancelar en este estado');
+    }
+    return this.cancelReservation(id, user);
   }
 
   private async cancelReservation(id: number, user: any) {

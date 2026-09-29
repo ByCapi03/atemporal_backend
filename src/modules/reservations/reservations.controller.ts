@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Headers, UnauthorizedException } from '@nestjs/common';
 import { ReservationsService } from './reservations.service';
-import { CreateReservationDto, UpdateReservationDto } from './reservation.dto';
+import { CreateReservationDto, UpdateReservationDto, CreatePaymentDto } from './reservation.dto';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { BadRequestException } from '@nestjs/common';
 
@@ -9,9 +9,18 @@ import { BadRequestException } from '@nestjs/common';
 export class ReservationsController {
   constructor(private readonly reservationsService: ReservationsService) {}
 
-  @Post('intent')
-  createIntent(@Body() createReservationDto: CreateReservationDto, @Request() req: any) {
-    return this.reservationsService.createIntent(createReservationDto, req.user);
+  @Post()
+  create(@Body() createReservationDto: CreateReservationDto, @Request() req: any) {
+    return this.reservationsService.create(createReservationDto, req.user);
+  }
+
+  @Post(':id/create-payment')
+  createPayment(
+    @Param('id') id: string,
+    @Body() body: CreatePaymentDto,
+    @Request() req: any
+  ) {
+    return this.reservationsService.createPayment(+id, body.paymentOption, body.clientPlatform, req.user);
   }
 
   @Get('my')
@@ -22,6 +31,11 @@ export class ReservationsController {
   @Get('my/:id')
   findOneMyReservation(@Param('id') id: string, @Request() req: any) {
     return this.reservationsService.findOneMyReservation(+id, req.user);
+  }
+
+  @Patch('my/:id/cancel')
+  cancelMyReservation(@Param('id') id: string, @Request() req: any) {
+    return this.reservationsService.cancelMyReservation(+id, req.user);
   }
 
   @Get()
@@ -55,38 +69,61 @@ export class ReservationsController {
   }
 }
 
-@Controller('reservations/webhook')
-export class ReservationsWebhookController {
-  constructor(private readonly reservationsService: ReservationsService) {}
+import { PaymentGatewayService } from '../sales/payment-gateway.service';
+import { SalesService } from '../sales/sales.service';
+
+@Controller('stripe/webhook')
+export class StripeWebhookController {
+  constructor(
+    private readonly reservationsService: ReservationsService,
+    private readonly paymentGatewayService: PaymentGatewayService,
+    private readonly salesService: SalesService
+  ) {}
 
   @Post()
-  async confirmWebhook(
+  async handleWebhook(
     @Headers('stripe-signature') signature: string,
     @Request() req: any
   ) {
     if (!signature) {
-      throw new UnauthorizedException('Firma invalida');
+      throw new BadRequestException('Firma invalida');
     }
     
     try {
-      // Typically we'd use stripe.webhooks.constructEvent(req.rawBody, signature, secret)
-      // For this simplified version we'll just pull the data assuming it is parsed
-      const event = req.body;
-      if (event.type === 'payment_intent.succeeded') {
-        const paymentIntent = event.data.object;
-        await this.reservationsService.confirmWebhook(paymentIntent.id, 'SUCCESS', paymentIntent.amount / 100);
+      const event = await this.paymentGatewayService.handleWebhook(req.body, signature, req.rawBody);
+      
+      if (event.type === 'checkout.session.completed') {
+        const session = event.data.object as any;
+        if (session.metadata?.flowType === 'PURCHASE') {
+          if (session.payment_status === 'paid') {
+            await this.salesService.confirmWebPurchase(session.metadata.saleId, session.metadata.paymentId, 'SUCCESS');
+          }
+        } else {
+          if (session.payment_status === 'paid') {
+            await this.reservationsService.confirmStripePayment(session.id, 'SUCCESS', session.amount_total / 100);
+          }
+        }
+      } else if (event.type === 'checkout.session.expired') {
+        const session = event.data.object as any;
+        if (session.metadata?.flowType === 'PURCHASE') {
+          await this.salesService.confirmWebPurchase(session.metadata.saleId, session.metadata.paymentId, 'FAIL');
+        } else {
+          await this.reservationsService.confirmStripePayment(session.id, 'FAIL', session.amount_total / 100);
+        }
+      } else if (event.type === 'payment_intent.succeeded') {
+        const paymentIntent = event.data.object as any;
+        if (paymentIntent.metadata?.flowType !== 'PURCHASE') {
+          await this.reservationsService.confirmStripePayment(paymentIntent.id, 'SUCCESS', paymentIntent.amount_received / 100);
+        }
       } else if (event.type === 'payment_intent.payment_failed') {
-        const paymentIntent = event.data.object;
-        await this.reservationsService.confirmWebhook(paymentIntent.id, 'FAIL', paymentIntent.amount / 100);
+        const paymentIntent = event.data.object as any;
+        if (paymentIntent.metadata?.flowType !== 'PURCHASE') {
+          await this.reservationsService.confirmStripePayment(paymentIntent.id, 'FAIL', paymentIntent.amount / 100);
+        }
       }
       return { received: true };
-    } catch (err) {
+    } catch (err: any) {
       throw new BadRequestException(`Webhook Error: ${err.message}`);
     }
-  }
-
-  @Post('mock/cancel-abandoned')
-  cancelAbandoned() {
-    return this.reservationsService.cancelAbandonedIntents();
   }
 }

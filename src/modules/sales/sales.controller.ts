@@ -3,13 +3,25 @@
  * Flujo de Ventas Generales: Expone rutas generales, como /sales/my 
  * (para que el cliente vea su historial de compras en la app).
  */
-import { Controller, Get, Query, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Param, UseGuards, Request } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { AuthGuard } from '../../common/guards/auth.guard';
 
 @Controller('sales')
 export class SalesController {
   constructor(private readonly salesService: SalesService) {}
+
+  @Post('checkout')
+  @UseGuards(AuthGuard)
+  checkoutWeb(@Body() body: any, @Request() req: any) {
+    return this.salesService.checkoutWeb(body, req.user);
+  }
+
+  @Post(':saleId/cancel-pending')
+  @UseGuards(AuthGuard)
+  cancelPendingSale(@Param('saleId') saleId: string, @Request() req: any) {
+    return this.salesService.cancelPendingSale(+saleId, req.user);
+  }
 
   @Get('my')
   @UseGuards(AuthGuard)

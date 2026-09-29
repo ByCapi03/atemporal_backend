@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ReservationsController, ReservationsWebhookController } from './reservations.controller';
+import { ReservationsController, StripeWebhookController } from './reservations.controller';
 import { ReservationsService } from './reservations.service';
 
 import { Reservation } from './reservation.entity';
@@ -13,6 +13,7 @@ import { Variant } from '../catalog/variant.entity';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SalesModule } from '../sales/sales.module';
+import { CatalogModule } from '../catalog/catalog.module';
 
 @Module({
   imports: [
@@ -27,9 +28,10 @@ import { SalesModule } from '../sales/sales.module';
     ]),
     AuthModule,
     NotificationsModule,
-    SalesModule
+    SalesModule,
+    CatalogModule
   ],
-  controllers: [ReservationsController, ReservationsWebhookController],
+  controllers: [ReservationsController, StripeWebhookController],
   providers: [ReservationsService],
   exports: [ReservationsService]
 })

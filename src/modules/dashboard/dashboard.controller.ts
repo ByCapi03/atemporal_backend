@@ -9,6 +9,6 @@ export class DashboardController {
   @Get('metrics')
   @UseGuards(AuthGuard)
   getMetrics(@Request() req: any) {
-    return this.dashboardService.getMetrics(req.user);
+    return this.dashboardService.getMetrics(req.user, req.query);
   }
 }

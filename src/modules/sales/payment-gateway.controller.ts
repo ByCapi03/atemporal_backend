@@ -9,8 +9,8 @@ export class PaymentGatewayController {
   @Post('webhook')
   async handleWebhook(
     @Headers('stripe-signature') signature: string,
-    @Req() req: RawBodyRequest<Request>
-  ) {
+    @Req() req: any
+  ): Promise<any> {
     if (!signature) {
       throw new BadRequestException('Missing stripe-signature header');
     }
