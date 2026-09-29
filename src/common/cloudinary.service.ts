@@ -59,7 +59,7 @@ export class CloudinaryService {
 
     return cloudinary.url(imagePublicId, {
       secure: true,
-      effect: `replace_color:${target}:30:${source}`,
+      effect: `replace_color:${target}:80:${source}`,
     });
   }
 }
