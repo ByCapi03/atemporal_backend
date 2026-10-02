@@ -52,44 +52,82 @@ export class NotificationsService {
   }
 
   private async sendPushNotification(tokens: string[], payload: { title: string; message: string; data?: Record<string, string> }) {
-    if (!tokens.length) return;
+    const results: any = { tokens, fcm: [], expo: [] };
+    if (!tokens.length) return results;
+
+    const fcmTokens = tokens.filter(t => !t.startsWith('ExponentPushToken') && !t.startsWith('ExpoPushToken'));
+    const expoTokens = tokens.filter(t => t.startsWith('ExponentPushToken') || t.startsWith('ExpoPushToken'));
     
-    try {
-      const messaging = this.firebaseAdmin.getMessaging();
-      const message = {
-        tokens,
-        notification: {
+    // Send to FCM
+    if (fcmTokens.length > 0) {
+      try {
+        const messaging = this.firebaseAdmin.getMessaging();
+        const message = {
+          tokens: fcmTokens,
+          notification: {
+            title: payload.title,
+            body: payload.message,
+          },
+          data: payload.data || {},
+        };
+
+        const response = await messaging.sendEachForMulticast(message);
+        this.logger.log(`[PUSH FCM] Success: ${response.successCount}, Failures: ${response.failureCount}`);
+
+        if (response.failureCount > 0) {
+          const failedTokens: string[] = [];
+          response.responses.forEach((resp: SendResponse, idx: number) => {
+            if (!resp.success) {
+              const errCode = resp.error?.code;
+              if (errCode === 'messaging/invalid-registration-token' || errCode === 'messaging/registration-token-not-registered') {
+                failedTokens.push(fcmTokens[idx]);
+              }
+            }
+          });
+
+          if (failedTokens.length > 0) {
+            await this.deviceRepo.update(
+              { token: In(failedTokens) },
+              { active: false }
+            );
+          }
+        }
+        results.fcm.push(response);
+      } catch (err) {
+        this.logger.error('Failed to send push notification via FCM', err);
+        results.fcm.push({ error: (err as any).message || err });
+      }
+    }
+
+    // Send to Expo
+    if (expoTokens.length > 0) {
+      try {
+        const messages = expoTokens.map(token => ({
+          to: token,
+          sound: 'default',
           title: payload.title,
           body: payload.message,
-        },
-        data: payload.data || {},
-      };
-
-      const response = await messaging.sendEachForMulticast(message);
-      
-      this.logger.log(`[PUSH FCM] Success: ${response.successCount}, Failures: ${response.failureCount}`);
-
-      if (response.failureCount > 0) {
-        const failedTokens: string[] = [];
-        response.responses.forEach((resp: SendResponse, idx: number) => {
-          if (!resp.success) {
-            const errCode = resp.error?.code;
-            if (errCode === 'messaging/invalid-registration-token' || errCode === 'messaging/registration-token-not-registered') {
-              failedTokens.push(tokens[idx]);
-            }
-          }
+          data: payload.data || {},
+        }));
+        
+        const res = await fetch('https://exp.host/--/api/v2/push/send', {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Accept-encoding': 'gzip, deflate',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(messages),
         });
-
-        if (failedTokens.length > 0) {
-          await this.deviceRepo.update(
-            { token: In(failedTokens) },
-            { active: false }
-          );
-        }
+        const data = await res.json();
+        this.logger.log(`[PUSH EXPO] Sent ${expoTokens.length} notifications. Status: ${res.status}`);
+        results.expo.push({ status: res.status, data, tokens: expoTokens });
+      } catch (err) {
+        this.logger.error('Failed to send push notification via Expo', err);
+        results.expo.push({ error: (err as any).message || err });
       }
-    } catch (err) {
-      this.logger.error('Failed to send push notification via FCM', err);
     }
+    return results;
   }
 
   async notifyReservationCreated(branchId: number, reservation: any, clientName: string) {
@@ -313,6 +351,13 @@ export class NotificationsService {
       }
 
       if (newStatus === 'LISTA') {
+        console.log({
+          event: 'reservation.ready',
+          reservationId: reservation.id,
+          clientUserId,
+          branchId
+        });
+        
         // Notify Cajeros of the branch
         const staffMembers = await this.userRepo.find({
           where: { branchId, active: true },
@@ -343,6 +388,11 @@ export class NotificationsService {
             .where('device.userId IN (:...userIds)', { userIds: targetUserIds })
             .andWhere('device.active = true')
             .getMany();
+
+          console.log({
+            devicesFound: devices.length,
+            tokens: devices.map(d => d.token)
+          });
 
           if (devices.length > 0) {
             await this.sendPushNotification(devices.map(d => d.token), {
@@ -378,7 +428,7 @@ export class NotificationsService {
     const tokens = devices.map(d => d.token);
 
     if (tokens.length > 0) {
-      await this.sendPushNotification(tokens, {
+      const results = await this.sendPushNotification(tokens, {
         title,
         message,
         data: {
@@ -386,7 +436,7 @@ export class NotificationsService {
           route: '/dashboard'
         }
       });
-      return { success: true, message: `Sent to ${tokens.length} devices` };
+      return { success: true, message: `Attempted to send to ${tokens.length} devices`, details: results };
     }
 
     return { success: false, message: 'No active devices found' };

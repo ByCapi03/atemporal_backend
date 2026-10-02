@@ -34,6 +34,15 @@ export class Payment {
   @Column({ type: 'varchar', nullable: true, unique: true })
   stripePaymentIntentId: string;
 
+  @Column({ type: 'varchar', nullable: true })
+  externalReference: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  provider: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  expiresAt: Date;
+
   @Column()
   saleId: number;
 

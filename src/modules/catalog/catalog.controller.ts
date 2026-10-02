@@ -51,6 +51,29 @@ export class CatalogController {
     return this.catalogService.uploadProductArImage(+id, file);
   }
 
+  @Post('products/:id/ar-torso')
+  @UseInterceptors(FileInterceptor('image'))
+  uploadProductArTorsoImage(@Param('id') id: string, @UploadedFile() file: any) {
+    return this.catalogService.uploadProductArPartImage(+id, file, 'torso');
+  }
+
+  @Post('products/:id/ar-left-sleeve')
+  @UseInterceptors(FileInterceptor('image'))
+  uploadProductArLeftSleeveImage(@Param('id') id: string, @UploadedFile() file: any) {
+    return this.catalogService.uploadProductArPartImage(+id, file, 'leftSleeve');
+  }
+
+  @Post('products/:id/ar-right-sleeve')
+  @UseInterceptors(FileInterceptor('image'))
+  uploadProductArRightSleeveImage(@Param('id') id: string, @UploadedFile() file: any) {
+    return this.catalogService.uploadProductArPartImage(+id, file, 'rightSleeve');
+  }
+
+  @Delete('products/:id/ar-part/:part')
+  removeProductArPart(@Param('id') id: string, @Param('part') part: string) {
+    return this.catalogService.removeProductArPart(+id, part);
+  }
+
   @Post('variants')
   createVariant(@Body() createVariantDto: CreateVariantDto) { return this.catalogService.createVariant(createVariantDto); }
   @Get('variants')

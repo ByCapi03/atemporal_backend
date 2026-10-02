@@ -51,6 +51,24 @@ export class Product {
   @Column({ nullable: true })
   arImagePublicId: string;
 
+  @Column({ nullable: true })
+  arTorsoUrl: string;
+
+  @Column({ nullable: true })
+  arTorsoPublicId: string;
+
+  @Column({ nullable: true })
+  arLeftSleeveUrl: string;
+
+  @Column({ nullable: true })
+  arLeftSleevePublicId: string;
+
+  @Column({ nullable: true })
+  arRightSleeveUrl: string;
+
+  @Column({ nullable: true })
+  arRightSleevePublicId: string;
+
   @Column({ type: 'enum', enum: ArGarmentType, nullable: true })
   arType: ArGarmentType;
 

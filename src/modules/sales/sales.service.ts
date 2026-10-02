@@ -203,8 +203,9 @@ export class SalesService {
       const payment = queryRunner.manager.create(Payment, {
         saleId,
         amount: totalSale,
-        method: PaymentMethod.PASARELA,
+        method: PaymentMethod.TARJETA,
         status: 'PENDIENTE' as any,
+        provider: 'STRIPE'
       });
       const savedPayment = await queryRunner.manager.save(payment);
       paymentId = savedPayment.id;

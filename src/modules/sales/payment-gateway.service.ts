@@ -26,6 +26,14 @@ export class PaymentGatewayService {
     };
   }
 
+  async retrievePaymentIntent(intentId: string): Promise<Stripe.Response<Stripe.PaymentIntent>> {
+    return this.stripe.paymentIntents.retrieve(intentId);
+  }
+
+  async retrieveCheckoutSession(sessionId: string): Promise<Stripe.Response<Stripe.Checkout.Session>> {
+    return this.stripe.checkout.sessions.retrieve(sessionId);
+  }
+
   async cancelPaymentIntent(intentId: string) {
     try {
       await this.stripe.paymentIntents.cancel(intentId);
@@ -59,10 +67,10 @@ export class PaymentGatewayService {
       },
       success_url: metadata.flowType === 'PURCHASE' 
         ? `${frontendUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}` 
-        : `${frontendUrl}/reservations/${metadata.reservationId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+        : `${frontendUrl}/account/reservations?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: metadata.flowType === 'PURCHASE'
         ? `${frontendUrl}/checkout`
-        : `${frontendUrl}/reservations/${metadata.reservationId}?payment=cancelled`,
+        : `${frontendUrl}/account/reservations?payment=cancelled`,
     });
 
     return {

@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, BadRequestException, UnauthorizedException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, UnauthorizedException, ForbiddenException, ConflictException, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 
 import { CreateReservationDto, UpdateReservationDto } from './reservation.dto';
 import { Reservation } from './reservation.entity';
@@ -21,6 +21,8 @@ import { SaleChannel, SaleStatus, PaymentMethod, PaymentStatus } from '../sales/
 import { AppGateway } from '../../common/realtime/app.gateway';
 import { PaymentGatewayService } from '../sales/payment-gateway.service';
 import { CatalogPricingService } from '../catalog/catalog-pricing.service';
+import * as jwt from 'jsonwebtoken';
+import * as qrcode from 'qrcode';
 
 export interface PaymentSummary {
   total: number;
@@ -31,7 +33,7 @@ export interface PaymentSummary {
 }
 
 @Injectable()
-export class ReservationsService {
+export class ReservationsService implements OnModuleInit {
   constructor(
     @InjectRepository(Reservation) private reservationRepository: Repository<Reservation>,
     @InjectRepository(ReservationItem) private reservationItemRepository: Repository<ReservationItem>,
@@ -43,6 +45,12 @@ export class ReservationsService {
     private readonly paymentGatewayService: PaymentGatewayService,
     private readonly catalogPricingService: CatalogPricingService,
   ) {}
+
+  onModuleInit() {
+    setInterval(() => {
+      this.cancelAbandonedIntents().catch(e => console.error('[CRON] Error cancelAbandonedIntents:', e));
+    }, 60000);
+  }
 
   private async getClientByUser(user: any): Promise<Client> {
     const client = await this.clientRepository.findOneBy({ userId: user.sub });
@@ -177,7 +185,7 @@ export class ReservationsService {
 
       // Crear Sale
       const sale = queryRunner.manager.create(Sale, {
-        channel: SaleChannel.WEB,
+        channel: createReservationDto.clientPlatform === 'mobile' ? SaleChannel.MOVIL : SaleChannel.WEB,
         status: SaleStatus.PENDIENTE,
         branchId: createReservationDto.branchId,
         clientId: client.id,
@@ -220,59 +228,173 @@ export class ReservationsService {
     }
   }
 
-  async createPayment(id: number, paymentOption: 'DEPOSIT_30' | 'FULL', clientPlatform: 'web' | 'mobile', user: any) {
+  async createPayment(id: number, paymentOption: 'DEPOSIT_30' | 'FULL', clientPlatform: 'web' | 'mobile', user: any, method: PaymentMethod = PaymentMethod.TARJETA, phoneNumber?: string) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const reservation = await queryRunner.manager.findOne(Reservation, {
-        where: { id, clientId: user.sub },
-        relations: { sale: true },
-        lock: { mode: 'pessimistic_write' }
+      const client = await queryRunner.manager.findOne(Client, {
+        where: { userId: user.sub }
       });
+      if (!client) {
+        throw new UnauthorizedException('El usuario no tiene un perfil de cliente asociado.');
+      }
+
+      const reservation = await queryRunner.manager
+        .createQueryBuilder(Reservation, 'reservation')
+        .where('reservation.id = :id', { id })
+        .andWhere('reservation.clientId = :clientId', { clientId: client.id })
+        .setLock('pessimistic_write')
+        .getOne();
 
       if (!reservation) {
         throw new NotFoundException('Reserva no encontrada o no autorizada');
       }
-      if (reservation.status !== ReservationStatus.PENDIENTE) {
-        throw new BadRequestException('La reserva no esta en estado PENDIENTE');
+      if (reservation.status !== ReservationStatus.PENDIENTE && reservation.status !== ReservationStatus.CONFIRMADA) {
+        throw new BadRequestException('La reserva no esta en estado válido para pagar');
       }
-      if (!reservation.sale) {
+
+      const sale = await queryRunner.manager.findOne(Sale, {
+        where: { reservationId: reservation.id },
+        relations: { payments: true }
+      });
+
+      if (!sale) {
         throw new BadRequestException('La reserva no tiene una venta asociada');
       }
 
-      const total = Number(reservation.sale.total);
-      const amountToPay = paymentOption === 'DEPOSIT_30' ? Number((total * 0.3).toFixed(2)) : total;
+      const total = Number(sale.total);
+      const paidAmount = sale.payments ? sale.payments.filter(p => p.status === PaymentStatus.APROBADO).reduce((sum, p) => sum + Number(p.amount), 0) : 0;
+      const remainingAmount = Number((total - paidAmount).toFixed(2));
+
+      if (remainingAmount <= 0) {
+        throw new BadRequestException('La reserva ya está pagada completamente');
+      }
+
+      let amountToPay = 0;
+      if (paymentOption === 'DEPOSIT_30') {
+         if (paidAmount > 0) throw new BadRequestException('El depósito ya fue realizado');
+         amountToPay = Number((total * 0.3).toFixed(2));
+      } else {
+         amountToPay = remainingAmount; // 'FULL' covers the remaining balance
+      }
 
       const metadata = {
         reservationId: reservation.id.toString(),
-        saleId: reservation.sale.id.toString(),
-        paymentOption: paymentOption
+        saleId: sale.id.toString(),
+        paymentOption: paymentOption,
+        flowType: 'RESERVATION'
       };
 
-      let stripeResponse;
-      if (clientPlatform === 'web') {
-        stripeResponse = await this.paymentGatewayService.createCheckoutSession(amountToPay, metadata);
-      } else {
-        stripeResponse = await this.paymentGatewayService.createPaymentIntent(amountToPay, metadata);
+      console.log('[CREATE PAYMENT]', {
+        reservationId: reservation.id,
+        paymentOption,
+        expectedAmount: amountToPay
+      });
+
+      const pendingPayments = sale.payments?.filter(p => p.status === PaymentStatus.PENDIENTE && p.stripePaymentIntentId) || [];
+      
+      let reusedPayment = null;
+
+      for (const p of pendingPayments) {
+        if (clientPlatform !== 'mobile') continue;
+
+        const pi = await this.paymentGatewayService.retrievePaymentIntent(p.stripePaymentIntentId);
+        
+        if (pi.status === 'succeeded') {
+           await queryRunner.commitTransaction();
+           await this.confirmStripePayment(p.stripePaymentIntentId, 'SUCCESS', Number(p.amount));
+           throw new ConflictException('Un pago ya fue completado exitosamente para esta reserva.');
+        }
+        
+        if (pi.status === 'processing') {
+           await queryRunner.rollbackTransaction();
+           throw new ConflictException('Un pago se encuentra procesandose en Stripe.');
+        }
+
+        if (pi.status === 'requires_payment_method' || pi.status === 'canceled') {
+           if (Number(p.amount) === amountToPay && !reusedPayment && pi.status !== 'canceled') {
+              reusedPayment = { paymentId: p.id, stripeId: pi.id, clientSecret: pi.client_secret };
+           } else {
+              if (pi.status === 'requires_payment_method') {
+                 await this.paymentGatewayService.cancelPaymentIntent(p.stripePaymentIntentId);
+              }
+              p.status = PaymentStatus.RECHAZADO;
+              await queryRunner.manager.save(Payment, p);
+           }
+        }
       }
 
+      if (reusedPayment) {
+        console.log('[CREATE PAYMENT] Reutilizando PaymentIntent existente', { 
+          paymentId: reusedPayment.paymentId, 
+          paymentIntentId: reusedPayment.stripeId,
+          reused: true 
+        });
+        await queryRunner.commitTransaction();
+        return reusedPayment;
+      }
+
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + 5);
+
       const payment = queryRunner.manager.create(Payment, {
-        saleId: reservation.sale.id,
+        saleId: sale.id,
         amount: amountToPay,
-        method: PaymentMethod.PASARELA,
+        method: method,
         status: PaymentStatus.PENDIENTE,
-        transactionReference: stripeResponse.stripeId,
-        stripePaymentIntentId: stripeResponse.stripeId
+        provider: method === PaymentMethod.BILLETERA_MOVIL ? 'DEMO_WALLET' : (method === PaymentMethod.TARJETA ? 'STRIPE' : (method === PaymentMethod.QR ? 'DEMO_QR' : undefined)),
+        expiresAt: (method === PaymentMethod.QR || method === PaymentMethod.BILLETERA_MOVIL) ? expiresAt : undefined
       });
       await queryRunner.manager.save(Payment, payment);
+
+      let responsePayload: any = {};
+
+      if (method === PaymentMethod.QR) {
+         const jwtSecret = process.env.JWT_SECRET || 'secret';
+         const token = jwt.sign({ paymentId: payment.id }, jwtSecret, { expiresIn: '5m' });
+         const qrUrl = process.env.QR_PUBLIC_WEB_URL || 'http://localhost:5173';
+         const confirmationUrl = `${qrUrl}/qr-payment/${token}`;
+         const qrImage = await qrcode.toDataURL(confirmationUrl);
+         
+         payment.transactionReference = `QR-${payment.id}`;
+         payment.externalReference = payment.transactionReference;
+         await queryRunner.manager.save(Payment, payment);
+
+         responsePayload = {
+            reference: payment.transactionReference,
+            amount: amountToPay,
+            confirmationUrl: confirmationUrl,
+            qrImage: qrImage
+         };
+      } else if (method === PaymentMethod.BILLETERA_MOVIL) {
+         payment.transactionReference = `WALLET-${payment.id}`;
+         payment.externalReference = payment.transactionReference;
+         await queryRunner.manager.save(Payment, payment);
+
+         responsePayload = {
+            reference: payment.transactionReference,
+            amount: amountToPay,
+            status: 'PENDIENTE'
+         };
+      } else {
+         if (clientPlatform === 'web') {
+            responsePayload = await this.paymentGatewayService.createCheckoutSession(amountToPay, metadata);
+         } else {
+            responsePayload = await this.paymentGatewayService.createPaymentIntent(amountToPay, metadata);
+         }
+         payment.transactionReference = responsePayload.stripeId || responsePayload.reference;
+         payment.stripePaymentIntentId = responsePayload.stripeId || undefined;
+         payment.externalReference = responsePayload.reference || undefined;
+         await queryRunner.manager.save(Payment, payment);
+      }
 
       await queryRunner.commitTransaction();
 
       return {
         paymentId: payment.id,
-        ...stripeResponse
+        ...responsePayload
       };
 
     } catch (err) {
@@ -283,40 +405,30 @@ export class ReservationsService {
     }
   }
 
-  async confirmStripePayment(paymentIntentId: string, status: 'SUCCESS' | 'FAIL', amount: number) {
+  async confirmPaymentTransaction(payment: Payment, status: 'SUCCESS' | 'FAIL', amount: number) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const payment = await queryRunner.manager.findOne(Payment, {
-        where: { transactionReference: paymentIntentId },
-        lock: { mode: 'pessimistic_write' },
+      // Re-fetch with relations
+      const p = await queryRunner.manager.findOne(Payment, {
+        where: { id: payment.id },
         relations: { sale: { reservation: { items: true, client: true } } }
       });
 
-      if (!payment) {
-        throw new NotFoundException('Intento de pago no encontrado');
-      }
-
-      if (Number(payment.amount) !== amount) {
-        throw new BadRequestException('El monto pagado no coincide con el registrado');
-      }
-
-      if (payment.status !== PaymentStatus.PENDIENTE) {
-        // Idempotent: already processed
+      if (!p) throw new NotFoundException('Pago no encontrado');
+      if (Number(p.amount) !== amount) throw new BadRequestException('El monto pagado no coincide con el registrado');
+      if (p.status !== PaymentStatus.PENDIENTE) {
         await queryRunner.rollbackTransaction();
         return { message: 'Already processed' };
       }
 
-      const sale = payment.sale;
+      const sale = p.sale;
       const reservation = sale.reservation;
 
-      if (!sale || !reservation) {
-        throw new BadRequestException('El pago no esta asociado a una venta/reserva valida');
-      }
+      if (!sale || !reservation) throw new BadRequestException('El pago no esta asociado a una reserva valida');
 
-      // Adicional pessimistic locks opcionales (pero payment lock suele ser suficiente ya que no hay concurrencia por otra via)
       const lockedRes = await queryRunner.manager.findOne(Reservation, { where: { id: reservation.id }, lock: { mode: 'pessimistic_write' }});
       const lockedSale = await queryRunner.manager.findOne(Sale, { where: { id: sale.id }, lock: { mode: 'pessimistic_write' }});
 
@@ -326,30 +438,28 @@ export class ReservationsService {
       }
 
       if (lockedRes.status !== ReservationStatus.PENDIENTE) {
-         await queryRunner.rollbackTransaction();
+         p.status = PaymentStatus.RECHAZADO;
+         await queryRunner.manager.save(p);
+         await queryRunner.commitTransaction();
          return { message: 'Reservation already processed' };
       }
 
       if (status === 'SUCCESS') {
-        payment.status = PaymentStatus.APROBADO;
+        p.status = PaymentStatus.APROBADO;
         reservation.status = ReservationStatus.CONFIRMADA;
         
-        const isFull = Number(payment.amount) === Number(sale.total);
+        const isFull = Number(p.amount) === Number(sale.total);
         if (isFull) {
           sale.status = SaleStatus.COMPLETADA;
-          
           for (const item of reservation.items) {
              const inventory = await queryRunner.manager.findOne(Inventory, {
                 where: { branchId: reservation.branchId, variantId: item.variantId },
                 lock: { mode: 'pessimistic_write' }
              });
-             
-             // Convertir HOLD a VENTA
              if (inventory) {
                inventory.stock -= item.quantity;
                inventory.reserved -= item.quantity;
                await queryRunner.manager.save(inventory);
-               
                const movement = queryRunner.manager.create(InventoryMovement, {
                   inventoryId: inventory.id,
                   type: MovementType.VENTA,
@@ -361,34 +471,21 @@ export class ReservationsService {
              }
           }
         } else {
-           // DEPOSIT_30
            sale.status = SaleStatus.PENDIENTE;
-           // reserved was already incremented, so do nothing to inventory!
         }
         
-        await queryRunner.manager.save(payment);
+        await queryRunner.manager.save(p);
         await queryRunner.manager.save(sale);
         await queryRunner.manager.save(reservation);
         
         await queryRunner.commitTransaction();
 
         const clientName = `${reservation.client.name} ${reservation.client.lastName}`;
-        this.notificationsService.notifyReservationCreated(
-          reservation.branchId,
-          reservation,
-          clientName
-        ).catch(e => console.error(e));
-        
-        this.notificationsService.notifyReservationPaid(
-          reservation.branchId,
-          reservation,
-          clientName,
-          reservation.client.userId
-        ).catch(e => console.error(e));
+        this.notificationsService.notifyReservationCreated(reservation.branchId, reservation, clientName).catch(e => console.error(e));
+        this.notificationsService.notifyReservationPaid(reservation.branchId, reservation, clientName, reservation.client.userId).catch(e => console.error(e));
         
       } else {
-        // FAIL
-        payment.status = PaymentStatus.RECHAZADO;
+        p.status = PaymentStatus.RECHAZADO;
         reservation.status = ReservationStatus.CANCELADA;
         sale.status = SaleStatus.PENDIENTE;
         
@@ -397,11 +494,9 @@ export class ReservationsService {
                 where: { branchId: reservation.branchId, variantId: item.variantId },
                 lock: { mode: 'pessimistic_write' }
              });
-             
              if (inventory) {
                inventory.reserved -= item.quantity;
                await queryRunner.manager.save(inventory);
-               
                const movement = queryRunner.manager.create(InventoryMovement, {
                   inventoryId: inventory.id,
                   type: MovementType.LIBERACION_RESERVA,
@@ -413,10 +508,9 @@ export class ReservationsService {
              }
         }
         
-        await queryRunner.manager.save(payment);
+        await queryRunner.manager.save(p);
         await queryRunner.manager.save(sale);
         await queryRunner.manager.save(reservation);
-        
         await queryRunner.commitTransaction();
       }
       return { success: true };
@@ -428,30 +522,137 @@ export class ReservationsService {
     }
   }
 
+  async confirmStripePayment(paymentIntentId: string, status: 'SUCCESS' | 'FAIL', amount: number) {
+    const payment = await this.dataSource.manager.findOne(Payment, { where: { stripePaymentIntentId: paymentIntentId } });
+    if (!payment) throw new NotFoundException('Intento de pago no encontrado');
+    return this.confirmPaymentTransaction(payment, status, amount);
+  }
+
+  async confirmPaymentById(paymentId: number, status: 'SUCCESS' | 'FAIL') {
+    const payment = await this.dataSource.manager.findOne(Payment, { where: { id: paymentId } });
+    if (!payment) throw new NotFoundException('Pago no encontrado');
+    return this.confirmPaymentTransaction(payment, status, Number(payment.amount));
+  }
+
+  async reconcileSession(sessionId: string, user: any): Promise<{ success: boolean; paymentStatus: string | null }> {
+    try {
+      const client = await this.clientRepository.findOne({ where: { userId: user.sub } });
+      if (!client) throw new UnauthorizedException('Perfil de cliente no encontrado');
+      
+      const payment = await this.dataSource.manager.findOne(Payment, { 
+        where: { stripePaymentIntentId: sessionId },
+        relations: { sale: { reservation: true } }
+      });
+      
+      if (!payment || !payment.sale || !payment.sale.reservation) {
+         throw new NotFoundException('Pago o reserva no encontrada para esta sesión');
+      }
+      
+      if (payment.sale.reservation.clientId !== client.id) {
+         throw new ForbiddenException('No tienes permiso para reconciliar esta reserva');
+      }
+
+      const session = await this.paymentGatewayService.retrieveCheckoutSession(sessionId);
+      
+      if (session.payment_status === 'paid') {
+         await this.confirmStripePayment(sessionId, 'SUCCESS', session.amount_total ? session.amount_total / 100 : Number(payment.amount));
+      } else if (session.status === 'expired' || session.status === 'open') {
+         // Si esta open pero venimos de return, podria seguir pendiente.
+         // Lo dejamos en PENDIENTE.
+      }
+      
+      return { success: true, paymentStatus: session.payment_status };
+    } catch (e: any) {
+      console.error('[RECONCILE SESSION ERROR]', e);
+      throw new BadRequestException(e.message || 'Error en reconciliacion por sesion');
+    }
+  }
+
+  async reconcilePayment(id: number, user: any) {
+    try {
+      const client = await this.clientRepository.findOne({ where: { userId: user.sub } });
+      if (!client) throw new UnauthorizedException('Perfil de cliente no encontrado');
+      const reservation = await this.reservationRepository.findOne({
+        where: { id, clientId: client.id },
+        relations: { sale: { payments: true } }
+      });
+      if (!reservation || !reservation.sale) throw new NotFoundException('Reserva no encontrada');
+
+      const pendingPayments = reservation.sale.payments?.filter(p => p.status === PaymentStatus.PENDIENTE && p.stripePaymentIntentId) || [];
+      
+      for (const payment of pendingPayments) {
+        if (payment.stripePaymentIntentId.startsWith('cs_')) {
+           const session = await this.paymentGatewayService.retrieveCheckoutSession(payment.stripePaymentIntentId);
+           if (session.payment_status === 'paid') {
+             await this.confirmStripePayment(payment.stripePaymentIntentId, 'SUCCESS', session.amount_total ? session.amount_total / 100 : Number(payment.amount));
+           }
+        } else {
+           const pi = await this.paymentGatewayService.retrievePaymentIntent(payment.stripePaymentIntentId);
+           if (pi.status === 'succeeded') {
+             await this.confirmStripePayment(payment.stripePaymentIntentId, 'SUCCESS', pi.amount_received ? pi.amount_received / 100 : Number(payment.amount));
+           } else if (pi.status === 'canceled') {
+             await this.confirmStripePayment(payment.stripePaymentIntentId, 'FAIL', Number(payment.amount));
+           }
+        }
+      }
+      const updatedRes = await this.findOneMyReservation(id, user);
+      
+      return updatedRes.paymentSummary;
+    } catch (e: any) {
+      console.error('[RECONCILE ERROR]', e);
+      throw new BadRequestException(e.message || 'Error en reconciliacion');
+    }
+  }
+
   async cancelAbandonedIntents() {
-    // 30 mins limit
-    const expirationTime = new Date(Date.now() - 30 * 60 * 1000);
+    // 30 mins limit for reservations without expiresAt
+    const defaultExpirationTime = new Date(Date.now() - 30 * 60 * 1000);
+    const now = new Date();
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     
-    // Solo lectura de pendientes antiguos
+    // Solo lectura de pendientes
     const reservations = await queryRunner.manager.find(Reservation, {
       where: {
         status: ReservationStatus.PENDIENTE
-      }
+      },
+      relations: { sale: { payments: true } }
     });
 
-    const abandoned = reservations.filter(r => new Date(r.registrationDate) < expirationTime);
+    const abandoned = reservations.filter(r => {
+      if (!r.sale || !r.sale.payments || r.sale.payments.length === 0) {
+        return new Date(r.registrationDate) < defaultExpirationTime;
+      }
+      
+      const hasApproved = r.sale.payments.some(p => p.status === PaymentStatus.APROBADO);
+      if (hasApproved) return false;
+
+      // Un pago pendiente activo que aún NO expira evita que se cancele la reserva
+      const hasActivePending = r.sale.payments.some(p => 
+        p.status === PaymentStatus.PENDIENTE && 
+        (!p.expiresAt || new Date(p.expiresAt) > now)
+      );
+      
+      if (hasActivePending) return false;
+
+      // Si todos los pendientes están expirados, o no tiene activos, se abandona
+      return true;
+    });
 
     let cancelledCount = 0;
     for (const res of abandoned) {
        await queryRunner.startTransaction();
        try {
-         const reservation = await queryRunner.manager.findOne(Reservation, {
+         // Lock the reservation without relations first
+         const lockedRes = await queryRunner.manager.findOne(Reservation, {
            where: { id: res.id },
-           lock: { mode: 'pessimistic_write' },
-           relations: { items: true, sale: { payments: true } }
+           lock: { mode: 'pessimistic_write' }
          });
+         
+         const reservation = lockedRes ? await queryRunner.manager.findOne(Reservation, {
+           where: { id: res.id },
+           relations: { items: true, sale: { payments: true } }
+         }) : null;
          
          if (reservation && reservation.status === ReservationStatus.PENDIENTE) {
            reservation.status = ReservationStatus.CANCELADA;
@@ -508,7 +709,8 @@ export class ReservationsService {
     if (!user.roles?.includes('CLIENTE')) {
       throw new ForbiddenException('Endpoint exclusivo para clientes');
     }
-    const client = await this.getClientByUser(user);
+    const client = await this.clientRepository.findOne({ where: { userId: user.sub } });
+    if (!client) throw new UnauthorizedException('Perfil de cliente no encontrado');
 
     const reservations = await this.reservationRepository.find({
       where: { clientId: client.id },
@@ -535,7 +737,8 @@ export class ReservationsService {
     if (!user.roles?.includes('CLIENTE')) {
       throw new ForbiddenException('Endpoint exclusivo para clientes');
     }
-    const client = await this.getClientByUser(user);
+    const client = await this.clientRepository.findOne({ where: { userId: user.sub } });
+    if (!client) throw new UnauthorizedException('Perfil de cliente no encontrado');
 
     const reservation = await this.reservationRepository.findOne({
       where: { id, clientId: client.id },
@@ -559,7 +762,7 @@ export class ReservationsService {
     return { ...reservation, paymentSummary: this.calculatePaymentSummary(reservation) };
   }
 
-  async findAll(user: any) {
+  async findAll(user: any, deliveryQueue: boolean = false) {
     const isAdmin = user.roles?.includes('ADMIN');
     const isEncargado = user.roles?.includes('ENCARGADO');
     const isCajero = user.roles?.includes('CAJERO');
@@ -572,6 +775,14 @@ export class ReservationsService {
 
     if (isEncargado || isCajero) {
       whereClause.branchId = user.branchId;
+    }
+
+    if (deliveryQueue) {
+      whereClause.status = In([
+        ReservationStatus.CONFIRMADA,
+        ReservationStatus.PREPARANDO,
+        ReservationStatus.LISTA
+      ]);
     }
 
     const reservations = await this.reservationRepository.find({
@@ -880,7 +1091,7 @@ export class ReservationsService {
       throw new ForbiddenException('Endpoint exclusivo para cajeros');
     }
 
-    if (!Object.values(PaymentMethod).includes(method as PaymentMethod) || method === PaymentMethod.PASARELA) {
+    if (!Object.values(PaymentMethod).includes(method as PaymentMethod) || method === PaymentMethod.TARJETA) {
       throw new BadRequestException('Método de pago inválido o no soportado en caja');
     }
 
@@ -889,11 +1100,16 @@ export class ReservationsService {
     await queryRunner.startTransaction();
 
     try {
-      const reservation = await queryRunner.manager.findOne(Reservation, {
+      // Lock reservation without relations first to avoid Postgres FOR UPDATE outer join error
+      const lockedReservation = await queryRunner.manager.findOne(Reservation, {
         where: { id, branchId: user.branchId },
-        lock: { mode: 'pessimistic_write' },
-        relations: { items: { variant: { product: true } }, client: true, sale: { payments: true } }
+        lock: { mode: 'pessimistic_write' }
       });
+
+      const reservation = lockedReservation ? await queryRunner.manager.findOne(Reservation, {
+        where: { id },
+        relations: { items: { variant: { product: true } }, client: true, sale: { payments: true } }
+      }) : null;
 
       if (!reservation) {
         throw new NotFoundException('Reserva no encontrada o no pertenece a su sucursal');

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ReservationsController, StripeWebhookController } from './reservations.controller';
+import { PaymentsController, PublicPaymentsController } from './payments.controller';
 import { ReservationsService } from './reservations.service';
 
 import { Reservation } from './reservation.entity';
@@ -31,7 +32,7 @@ import { CatalogModule } from '../catalog/catalog.module';
     SalesModule,
     CatalogModule
   ],
-  controllers: [ReservationsController, StripeWebhookController],
+  controllers: [ReservationsController, StripeWebhookController, PaymentsController, PublicPaymentsController],
   providers: [ReservationsService],
   exports: [ReservationsService]
 })

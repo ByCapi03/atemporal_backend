@@ -34,6 +34,10 @@ export class CreateReservationDto {
   @Type(() => ReservationItemDto)
   items: ReservationItemDto[];
 
+  @IsString()
+  @IsEnum(['web', 'mobile'])
+  @IsOptional()
+  clientPlatform?: 'web' | 'mobile';
 }
 
 export class UpdateReservationDto {

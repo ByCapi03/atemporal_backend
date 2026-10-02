@@ -94,7 +94,6 @@ export class CashSessionsService {
     let cashSales = 0;
     let cardSales = 0;
     let qrSales = 0;
-    let transferSales = 0;
 
     payments.forEach(p => {
       const total = Number(p.total) || 0;
@@ -106,21 +105,18 @@ export class CashSessionsService {
           cardSales += total;
           break;
         case PaymentMethod.QR:
+        case PaymentMethod.BILLETERA_MOVIL:
           qrSales += total;
-          break;
-        case PaymentMethod.TRANSFERENCIA:
-          transferSales += total;
           break;
       }
     });
 
-    const totalVendido = cashSales + cardSales + qrSales + transferSales;
+    const totalVendido = cashSales + cardSales + qrSales;
 
     return {
       cashSales,
       cardSales,
       qrSales,
-      transferSales,
       totalVendido
     };
   }

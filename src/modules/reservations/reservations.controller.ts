@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Headers, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Request, Headers, UnauthorizedException, Query } from '@nestjs/common';
 import { ReservationsService } from './reservations.service';
 import { CreateReservationDto, UpdateReservationDto, CreatePaymentDto } from './reservation.dto';
 import { AuthGuard } from '../../common/guards/auth.guard';
@@ -23,6 +23,22 @@ export class ReservationsController {
     return this.reservationsService.createPayment(+id, body.paymentOption, body.clientPlatform, req.user);
   }
 
+  @Post(':id/reconcile-payment')
+  reconcilePayment(
+    @Param('id') id: string,
+    @Request() req: any
+  ) {
+    return this.reservationsService.reconcilePayment(+id, req.user);
+  }
+
+  @Post('reconcile-session/:sessionId')
+  reconcileSession(
+    @Param('sessionId') sessionId: string,
+    @Request() req: any
+  ) {
+    return this.reservationsService.reconcileSession(sessionId, req.user);
+  }
+
   @Get('my')
   findMyReservations(@Request() req: any) {
     return this.reservationsService.findMyReservations(req.user);
@@ -39,8 +55,8 @@ export class ReservationsController {
   }
 
   @Get()
-  findAll(@Request() req: any) {
-    return this.reservationsService.findAll(req.user);
+  findAll(@Request() req: any, @Query('deliveryQueue') deliveryQueue?: string) {
+    return this.reservationsService.findAll(req.user, deliveryQueue === 'true');
   }
 
   @Get(':id')
@@ -112,8 +128,15 @@ export class StripeWebhookController {
         }
       } else if (event.type === 'payment_intent.succeeded') {
         const paymentIntent = event.data.object as any;
+        console.log('[STRIPE WEBHOOK] event.type:', event.type);
+        console.log('[STRIPE WEBHOOK] paymentIntent.id:', paymentIntent.id);
+        console.log('[STRIPE WEBHOOK] paymentIntent.metadata:', paymentIntent.metadata);
+
         if (paymentIntent.metadata?.flowType !== 'PURCHASE') {
+          console.log('[STRIPE WEBHOOK] Executing confirmStripePayment for reservation');
           await this.reservationsService.confirmStripePayment(paymentIntent.id, 'SUCCESS', paymentIntent.amount_received / 100);
+        } else {
+          console.log('[STRIPE WEBHOOK] Skipped confirmStripePayment because flowType === PURCHASE');
         }
       } else if (event.type === 'payment_intent.payment_failed') {
         const paymentIntent = event.data.object as any;

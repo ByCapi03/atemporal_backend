@@ -150,6 +150,9 @@ export class StoreService {
 
     let previewImageUrl = product.imageUrl;
     let previewArImageUrl = product.arImageUrl ?? product.imageUrl;
+    let previewArTorsoUrl = product.arTorsoUrl;
+    let previewArLeftSleeveUrl = product.arLeftSleeveUrl;
+    let previewArRightSleeveUrl = product.arRightSleeveUrl;
 
     if (product.colorizable && product.sourceColor && variant.color.hexCode) {
       if (product.imagePublicId) {
@@ -157,6 +160,15 @@ export class StoreService {
       }
       if (product.arImagePublicId) {
         previewArImageUrl = this.cloudinaryService.getColorizedImageUrl(product.arImagePublicId, product.sourceColor, variant.color.hexCode);
+      }
+      if (product.arTorsoPublicId) {
+        previewArTorsoUrl = this.cloudinaryService.getColorizedImageUrl(product.arTorsoPublicId, product.sourceColor, variant.color.hexCode);
+      }
+      if (product.arLeftSleevePublicId) {
+        previewArLeftSleeveUrl = this.cloudinaryService.getColorizedImageUrl(product.arLeftSleevePublicId, product.sourceColor, variant.color.hexCode);
+      }
+      if (product.arRightSleevePublicId) {
+        previewArRightSleeveUrl = this.cloudinaryService.getColorizedImageUrl(product.arRightSleevePublicId, product.sourceColor, variant.color.hexCode);
       }
     }
 
@@ -172,6 +184,9 @@ export class StoreService {
         imageUrl: previewImageUrl,
         arEnabled: product.arEnabled,
         arImageUrl: previewArImageUrl,
+        arTorsoUrl: previewArTorsoUrl,
+        arLeftSleeveUrl: previewArLeftSleeveUrl,
+        arRightSleeveUrl: previewArRightSleeveUrl,
         arType: product.arType
       }
     };

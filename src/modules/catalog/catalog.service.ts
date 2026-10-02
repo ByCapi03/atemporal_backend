@@ -221,6 +221,52 @@ export class CatalogService {
     return this.productRepository.save(product);
   }
 
+  async uploadProductArPartImage(id: number, file: any, part: 'torso' | 'leftSleeve' | 'rightSleeve') {
+    const product = await this.findOneProduct(id);
+    const uploadResult = await this.cloudinaryService.uploadImage(file);
+
+    if (part === 'torso') {
+      if (product.arTorsoPublicId) await this.cloudinaryService.deleteImage(product.arTorsoPublicId);
+      product.arTorsoUrl = uploadResult.secure_url;
+      product.arTorsoPublicId = uploadResult.public_id;
+    } else if (part === 'leftSleeve') {
+      if (product.arLeftSleevePublicId) await this.cloudinaryService.deleteImage(product.arLeftSleevePublicId);
+      product.arLeftSleeveUrl = uploadResult.secure_url;
+      product.arLeftSleevePublicId = uploadResult.public_id;
+    } else if (part === 'rightSleeve') {
+      if (product.arRightSleevePublicId) await this.cloudinaryService.deleteImage(product.arRightSleevePublicId);
+      product.arRightSleeveUrl = uploadResult.secure_url;
+      product.arRightSleevePublicId = uploadResult.public_id;
+    }
+
+    return this.productRepository.save(product);
+  }
+
+  async removeProductArPart(id: number, part: string) {
+    const product = await this.findOneProduct(id);
+    
+    if (part === 'torso' && product.arTorsoPublicId) {
+      await this.cloudinaryService.deleteImage(product.arTorsoPublicId);
+      product.arTorsoUrl = null as any;
+      product.arTorsoPublicId = null as any;
+    } else if (part === 'leftSleeve' && product.arLeftSleevePublicId) {
+      await this.cloudinaryService.deleteImage(product.arLeftSleevePublicId);
+      product.arLeftSleeveUrl = null as any;
+      product.arLeftSleevePublicId = null as any;
+    } else if (part === 'rightSleeve' && product.arRightSleevePublicId) {
+      await this.cloudinaryService.deleteImage(product.arRightSleevePublicId);
+      product.arRightSleeveUrl = null as any;
+      product.arRightSleevePublicId = null as any;
+    } else if (part === 'rigid' && product.arImagePublicId) {
+      await this.cloudinaryService.deleteImage(product.arImagePublicId);
+      product.arImageUrl = null as any;
+      product.arImagePublicId = null as any;
+    }
+
+    await this.productRepository.save(product);
+    return { success: true };
+  }
+
   async removeProduct(id: number) {
     const product = await this.findOneProduct(id);
     product.active = false;
